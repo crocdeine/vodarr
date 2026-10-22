@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vodarr"
+version = "0.1.0"
+description = "Download VOD from an Xtream/M3U source, find the original P2P release via Prowlarr and cross-seed it in qBittorrent."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.160.0",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "httpx2==2.16.0",  # Starlette TestClient (replaces httpx)
+    "ruff==0.17.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S"]
+ignore = ["S324"]  # SHA-1 is mandated by BitTorrent v1 piece hashes and infohashes
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S310", "S311", "E501"]

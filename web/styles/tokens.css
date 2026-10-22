@@ -1,0 +1,118 @@
+/* VODarr design tokens — direction A « inspirée d'iPadOS » (ADR-0008).
+   Every colour, size, radius, shadow and duration of the interface lives here;
+   components.css only uses var(--…). Dark is the default theme. */
+
+:root {
+  color-scheme: dark;
+
+  /* typography */
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --fs-title: 34px;
+  --fs-heading: 20px;
+  --fs-body: 15px;
+  --fs-small: 13px;
+  --fs-xs: 12px;
+  --fs-label: 11px;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+  --lh: 1.4;
+  --tracking-title: -0.02em;
+  --tracking-label: 0.06em;
+
+  /* spacing (4 px scale) */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 20px;
+  --s-6: 24px;
+  --s-7: 28px;
+  --s-8: 32px;
+  --s-10: 40px;
+
+  /* sizes */
+  --hairline: 1px;
+  --focus-ring: 2px;
+  --icon: 18px;
+  --icon-sm: 15px;
+  --dot: 6px;
+  --stage-dot: 28px;
+  --logo: 32px;
+  --bar: 4px;
+  --row: 56px;
+  --field: 36px;
+  --poster-w: 40px;
+  --poster-h: 56px;
+  --sidebar-w: 232px;
+  --list-w: 360px;
+  --drawer-w: 420px;
+  --content-max: 980px;
+  --toast-w: 360px;
+
+  /* radii */
+  --r-lg: 16px;
+  --r-md: 12px;
+  --r-sm: 9px;
+  --r-xs: 7px;
+  --r-pill: 999px;
+
+  /* motion */
+  --t-fast: 120ms;
+  --t-base: 200ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --blur: 24px;
+
+  /* colours: dark theme */
+  --bg: #08141f;
+  --sidebar: rgba(14, 31, 48, 0.72);
+  --surface: #0f2132;
+  --surface-2: #16293c;
+  --glass: rgba(15, 33, 50, 0.7);
+  --line: rgba(255, 255, 255, 0.08);
+  --hover: rgba(255, 255, 255, 0.06);
+  --text: #f3f1ec;
+  --text-2: #a9b6c4;
+  --text-3: #8f9cab;
+  --accent: #e08a5f;
+  --accent-ink: #24100a;
+  --accent-2: #a5523a;
+  --ok: #34c77b;
+  --running: #5aa8ff;
+  --action: #f5a524;
+  --error: #ff6b6f;
+  --skipped: #9d9da3;
+  --on-status: #0d0f12;
+  --scrim: rgba(0, 0, 0, 0.5);
+  --shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 8px 24px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --tint: 16%;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --bg: #f5f1ea;
+  --sidebar: rgba(247, 243, 236, 0.8);
+  --surface: #ffffff;
+  --surface-2: #f0ebe2;
+  --glass: rgba(255, 255, 255, 0.74);
+  --line: rgba(0, 0, 0, 0.08);
+  --hover: rgba(0, 0, 0, 0.04);
+  --text: #13202d;
+  --text-2: #4c5866;
+  --text-3: #5f6b78;
+  --accent: #a2462a;
+  --accent-ink: #ffffff;
+  --accent-2: #c8714c;
+  --ok: #136b3a;
+  --running: #1d64c2;
+  --action: #864e00;
+  --error: #ad252b;
+  --skipped: #62626a;
+  --on-status: #ffffff;
+  --scrim: rgba(0, 0, 0, 0.3);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.05), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
+}

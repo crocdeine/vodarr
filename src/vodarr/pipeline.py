@@ -1,0 +1,188 @@
+"""Pipeline engine (ADR-0002): stages chain once the download is over; the stage functions
+live in stages.py."""
+
+import contextlib
+import json
+import logging
+import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass
+from pathlib import Path
+
+from vodarr.core import Msg, MsgError
+
+log = logging.getLogger(__name__)
+
+STAGES = ("download", "analyse", "search", "verify", "restore", "seed")
+
+
+class Skip(MsgError):
+    """The stage does not apply (service not configured, nothing to do): the pipeline goes on.
+    Caught before MsgError by the engine."""
+
+
+@dataclass
+class Ctx:
+    conn: sqlite3.Connection
+    config_dir: Path
+    release: sqlite3.Row
+    progress: Callable[[float, float], None]
+
+
+Handler = Callable[[Ctx], Msg | None]
+
+
+def _set(conn, release_id, name, state, msg: Msg | None = None, pct: int | None = None) -> None:
+    conn.execute(
+        "UPDATE stages SET state = ?, msg_code = ?, msg_params = ?, pct = coalesce(?, pct)"
+        " WHERE release_id = ? AND name = ?",
+        (state, msg and msg.code, msg and json.dumps(msg.params), pct, release_id, name),
+    )
+
+
+def _next_stage(conn: sqlite3.Connection) -> tuple[sqlite3.Row, str] | None:
+    """Oldest release whose download is over and whose next stage is pending."""
+    for release in conn.execute("SELECT * FROM releases ORDER BY created_at, id").fetchall():
+        rows = conn.execute(
+            "SELECT name, state FROM stages WHERE release_id = ?", (release["id"],)
+        ).fetchall()
+        state = {r["name"]: r["state"] for r in rows}
+        for name in STAGES:
+            current = state.get(name)
+            if current in ("done", "skipped"):
+                continue
+            if current == "pending" and name != "download":
+                return release, name
+            break  # running, error, or download not finished: this release waits
+    return None
+
+
+def process_next(
+    conn: sqlite3.Connection, config_dir: Path, handlers: dict[str, Handler]
+) -> str | None:
+    """Run one pending stage. Returns the release id, or None if nothing is ready."""
+    with locked(conn):  # claim atomically: the API thread may retry or delete meanwhile
+        found = _next_stage(conn)
+        if not found:
+            return None
+        release, name = found
+        rid = release["id"]
+        _set(conn, rid, name, "running", pct=0)
+
+    def progress(done: float, total: float) -> None:
+        pct = int(100 * done / total) if total else 0
+        conn.execute(
+            "UPDATE stages SET pct = ? WHERE release_id = ? AND name = ?", (pct, rid, name)
+        )
+
+    try:
+        msg = handlers[name](Ctx(conn, config_dir, release, progress))
+        _set(conn, rid, name, "done", msg, pct=100)
+    except Skip as e:
+        _set(conn, rid, name, "skipped", e.msg, pct=100)
+    except MsgError as e:
+        _set(conn, rid, name, "error", e.msg)
+    except Exception:
+        # Details stay in the (redacted) log: exception text may carry URLs with credentials.
+        log.exception("stage %s of release %s failed", name, rid)
+        _set(conn, rid, name, "error", Msg("pipeline.internal_error"))
+    return rid
+
+
+def recover(conn: sqlite3.Connection) -> None:
+    """At startup: a stage interrupted while running starts again (AC-CORE-05)."""
+    conn.execute(
+        "UPDATE stages SET state = 'pending' WHERE state = 'running' AND name != 'download'"
+    )
+
+
+@contextlib.contextmanager
+def locked(conn: sqlite3.Connection):
+    """A write transaction taken up front: check-then-act without races between threads."""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
+def ensure_idle(conn: sqlite3.Connection, release_id: str) -> None:
+    """Refuse to change a release while one of its stages runs (call inside `locked`)."""
+    if not conn.execute("SELECT 1 FROM releases WHERE id = ?", (release_id,)).fetchone():
+        raise MsgError("release.not_found")
+    running = conn.execute(
+        "SELECT 1 FROM stages WHERE release_id = ? AND state = 'running' AND name != 'download'",
+        (release_id,),
+    ).fetchone()
+    if running:
+        raise MsgError("release.busy")
+
+
+def retry(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
+    """Reset `stage` and every following stage to pending (AC-PIPE-03)."""
+    if stage not in STAGES:
+        raise MsgError("pipeline.unknown_stage", stage=stage)
+    with locked(conn):
+        ensure_idle(conn, release_id)
+        _reset(conn, release_id, stage)
+
+
+def _reset(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
+    names = STAGES[STAGES.index(stage) :]
+    conn.executemany(
+        "UPDATE stages SET state = 'pending', pct = 0, msg_code = NULL, msg_params = NULL"
+        " WHERE release_id = ? AND name = ?",
+        [(release_id, n) for n in names],
+    )
+    if stage == "download":
+        conn.execute(
+            "UPDATE files SET dl_status = 'queued', dl_error = NULL, in_queue = 1"
+            " WHERE release_id = ? AND dl_status IN ('error', 'cancelled')",
+            (release_id,),
+        )
+
+
+def status(conn: sqlite3.Connection, release_id: str) -> str:
+    """Aggregated status, computed, never stored (AC-PIPE-04):
+    downloading | processing | action_required | done | error."""
+    rows = conn.execute(
+        "SELECT name, state, msg_code FROM stages WHERE release_id = ?", (release_id,)
+    ).fetchall()
+    stage = {r["name"]: r for r in rows}
+    if not stage:
+        return "error"
+    files = {
+        r[0]
+        for r in conn.execute("SELECT dl_status FROM files WHERE release_id = ?", (release_id,))
+    }
+    if any(r["state"] == "error" for r in rows):
+        return "error"
+    if files & {"queued", "running"} or stage["download"]["state"] in ("pending", "running"):
+        return "downloading"
+    if any(r["state"] in ("pending", "running") for r in rows):
+        return "processing"
+    # A partial candidate waits for "complete from" unless its scope already has a reference.
+    waiting = conn.execute(
+        "SELECT 1 FROM candidates p WHERE p.release_id = ? AND p.status = 'partial'"
+        " AND p.complete_requested = 0 AND NOT EXISTS (SELECT 1 FROM candidates i"
+        " WHERE i.release_id = p.release_id AND i.scope = p.scope"
+        " AND i.status IN ('identical', 'identical_annex'))",
+        (release_id,),
+    ).fetchone()
+    if waiting:
+        return "action_required"
+    return "done"
+
+
+def handlers() -> dict[str, Handler]:
+    from vodarr import stages  # noqa: PLC0415 - stages imports this module
+
+    return {
+        "analyse": stages.stage_analyse,
+        "search": stages.stage_search,
+        "verify": stages.stage_verify,
+        "restore": stages.stage_restore,
+        "seed": stages.stage_seed,
+    }

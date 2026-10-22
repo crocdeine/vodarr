@@ -1,0 +1,36 @@
+# VODarr in an *arr stack — example. Copy to docker-compose.yml and adapt the marked values.
+# VODarr needs: the same /data mount as qBittorrent (hardlinks only work inside one volume),
+# network access to Prowlarr and qBittorrent, and its own /config.
+
+services:
+  vodarr:
+    image: ghcr.io/crocdeine/vodarr:latest   # or build it: `build: .`
+    container_name: vodarr
+    restart: unless-stopped
+    environment:
+      PUID: "1000"                 # same user as qBittorrent, so it can read the links
+      PGID: "1000"
+      TZ: Europe/Paris
+      # Every name or address you type in the browser to reach VODarr (anti DNS-rebinding).
+      VODARR_ALLOWED_HOSTS: "localhost,vodarr,nas.local"
+    volumes:
+      - ./vodarr/config:/config
+      - /path/to/data:/data           # the SAME host folder qBittorrent mounts as /data
+      # Optional, read-only: lets Settings › Cross-seed import its folders (never executed).
+      # - ./cross-seed/config.js:/cross-seed/config.js:ro
+    ports:
+      - "8863:8863"
+    networks:
+      - arr
+
+  # Shown for context: your existing services, unchanged.
+  # qbittorrent:
+  #   volumes:
+  #     - /path/to/data:/data
+  #   networks: [arr]
+  # prowlarr:
+  #   networks: [arr]
+
+networks:
+  arr:
+    external: true                   # the network your *arr stack already uses

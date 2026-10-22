@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- VODarr logo: an original drawing of a retro wooden TV (MIT, like the project). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#10273d"/>
+      <stop offset="1" stop-color="#081726"/>
+    </linearGradient>
+    <linearGradient id="wood" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c8714c"/>
+      <stop offset="0.55" stop-color="#a5523a"/>
+      <stop offset="1" stop-color="#7c3a27"/>
+    </linearGradient>
+    <linearGradient id="bezel" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f1ece2"/>
+      <stop offset="1" stop-color="#d5cdbd"/>
+    </linearGradient>
+    <radialGradient id="screen" cx="0.5" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#9fc7c7"/>
+      <stop offset="0.35" stop-color="#4c6a70"/>
+      <stop offset="1" stop-color="#1a2328"/>
+    </radialGradient>
+    <linearGradient id="knob" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f3eee4"/>
+      <stop offset="1" stop-color="#c9c0ae"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+
+  <!-- feet -->
+  <rect x="132" y="404" width="44" height="22" rx="8" fill="#6e3322"/>
+  <rect x="336" y="404" width="44" height="22" rx="8" fill="#6e3322"/>
+
+  <!-- wooden cabinet with a faint grain -->
+  <rect x="88" y="88" width="336" height="324" rx="44" fill="url(#wood)"/>
+  <g stroke="#ffffff" stroke-opacity="0.07" stroke-width="3" fill="none" stroke-linecap="round">
+    <path d="M110 110c60-8 120 6 180-2s84 4 112 0"/>
+    <path d="M104 392c70 6 130-6 200 2s70-4 100 0"/>
+    <path d="M100 150c6 70-6 150 2 220"/>
+    <path d="M412 140c-6 80 6 160-2 240"/>
+  </g>
+
+  <!-- cream bezel and screen -->
+  <rect x="112" y="110" width="288" height="216" rx="30" fill="url(#bezel)"/>
+  <rect x="128" y="124" width="256" height="188" rx="60" ry="54" fill="url(#screen)"/>
+  <ellipse cx="236" cy="160" rx="92" ry="22" fill="#ffffff" fill-opacity="0.1"/>
+
+  <!-- play symbol on the screen -->
+  <path d="M232 178v80l66-40z" fill="#f1ece2" stroke="#f1ece2" stroke-width="10" stroke-linejoin="round"/>
+
+  <!-- control panel: knobs and speaker grille -->
+  <rect x="112" y="338" width="288" height="56" rx="20" fill="#8a4330"/>
+  <circle cx="148" cy="366" r="20" fill="url(#knob)"/>
+  <rect x="146" y="350" width="4" height="16" rx="2" fill="#8a7f6d"/>
+  <circle cx="364" cy="366" r="20" fill="url(#knob)"/>
+  <rect x="362" y="350" width="4" height="16" rx="2" fill="#8a7f6d"/>
+  <g stroke="#5a2a1c" stroke-width="5" stroke-linecap="round">
+    <path d="M196 354h120"/>
+    <path d="M192 366h128"/>
+    <path d="M196 378h120"/>
+  </g>
+</svg>

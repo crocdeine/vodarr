@@ -1,0 +1,11 @@
+# Gitleaks: default rules, plus the synthetic credentials of the fake servers and the design
+# mock-up, which are test data by construction (tests/fakes, docs/design).
+[extend]
+useDefault = true
+
+[allowlist]
+description = "synthetic test data"
+paths = [
+  '''tests/fakes/.*''',
+  '''tests/test_.*\.py''',
+]

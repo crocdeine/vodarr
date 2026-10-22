@@ -1,0 +1,13 @@
+.git
+**/.DS_Store
+.venv
+.dev-*
+.claude
+**/__pycache__
+.pytest_cache
+.ruff_cache
+tests
+docs
+graphify-out
+*.md
+!README.md
