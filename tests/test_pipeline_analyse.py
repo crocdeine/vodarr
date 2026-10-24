@@ -68,3 +68,59 @@ def test_missing_downloaded_file_is_an_error(conn, tmp_path, make_season, season
     with pytest.raises(MsgError) as err:
         analyse(conn, tmp_path, rid, monkeypatch, {})
     assert err.value.msg.code == "analyse.file_missing"
+
+
+FFPROBE_REAL = {
+    "format": {
+        "format_name": "matroska,webm",
+        "duration": "2712.45",
+        "bit_rate": "6012345",
+        "tags": {"title": "Northwind.Precinct.S01E01.1080p.WEB-DL-GRP"},
+    },
+    "streams": [
+        {
+            "codec_type": "video",
+            "codec_name": "hevc",
+            "profile": "Main 10",
+            "width": 1920,
+            "height": 1080,
+            "r_frame_rate": "24000/1001",
+            "color_transfer": "smpte2084",
+            "tags": {"language": "und"},
+        },
+        {"codec_type": "audio", "codec_name": "eac3", "channels": 6, "tags": {"language": "fre"}},
+        {"codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "eng"}},
+        {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "fre"}},
+    ],
+}
+
+
+def test_technical_metadata_stored(conn, tmp_path, make_season, season_data, monkeypatch):
+    """Release page facts: resolution, codecs, languages, duration (0.1.1)."""
+    rid, _ = make_season(season_data[:1])
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: json.dumps(FFPROBE_REAL))
+    release = conn.execute("SELECT * FROM releases WHERE id = ?", (rid,)).fetchone()
+    stages.stage_analyse(pipeline.Ctx(conn, tmp_path / "config", release, lambda d, t: None))
+    info = json.loads(conn.execute("SELECT media_info FROM files").fetchone()[0])
+    assert info["video"] == {
+        "codec": "hevc",
+        "profile": "Main 10",
+        "width": 1920,
+        "height": 1080,
+        "fps": 23.976,
+        "hdr": True,
+    }
+    assert info["audio"] == [
+        {"codec": "eac3", "channels": 6, "language": "fre"},
+        {"codec": "aac", "channels": 2, "language": "eng"},
+    ]
+    assert info["subtitles"] == ["fre"] and info["duration"] == 2712.45
+
+
+def test_garbage_ffprobe_output_is_tolerated(conn, tmp_path, make_season, season_data, monkeypatch):
+    rid, _ = make_season(season_data[:1])
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: '["not", "an", "object"]')
+    release = conn.execute("SELECT * FROM releases WHERE id = ?", (rid,)).fetchone()
+    msg = stages.stage_analyse(pipeline.Ctx(conn, tmp_path / "config", release, lambda d, t: None))
+    assert msg.code == "analyse.done"
+    assert conn.execute("SELECT media_info FROM files").fetchone()[0] is None

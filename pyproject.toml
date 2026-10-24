@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "vodarr"
-version = "0.1.0"
+version = "0.1.1"
 description = "Download VOD from an Xtream/M3U source, find the original P2P release via Prowlarr and cross-seed it in qBittorrent."
 readme = "README.md"
 license = "MIT"

@@ -12,7 +12,7 @@ PACK = "Northwind.Precinct.S01.1080p.WEB-DL-GRP"
 
 @pytest.fixture
 def stack(conn, tmp_path, monkeypatch):
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     monkeypatch.setattr(stages, "SEED_POLL", 0)
     link_dir = tmp_path / "data" / "links"
     link_dir.mkdir(parents=True)
@@ -197,3 +197,28 @@ def test_paused_incomplete_torrent_is_an_error(conn, tmp_path, make_season, seas
     with pytest.raises(MsgError) as err:
         stages.stage_seed(ctx)
     assert err.value.msg.code == "seed.torrent_stopped"
+
+
+@pytest.mark.parametrize("mode", ["v5_login", "bypass"])
+def test_qbittorrent_5_2_login_and_whitelisted_subnet(
+    conn, tmp_path, make_season, season_data, stack, mode
+):
+    """Real run, qBittorrent 5.2.0: login answers 204 with a QBT_SID_<port> cookie, or no
+    session at all when the client's subnet bypasses authentication."""
+    prowl, qbit, _ = stack
+    setattr(qbit, mode, True)
+    ctx, _ = restored(conn, tmp_path, make_season, season_data, prowl)
+    assert stages.stage_seed(ctx).code == "seed.done"
+    assert len(qbit.added) == 1
+
+
+def test_qbittorrent_5_2_wrong_password(conn, tmp_path, make_season, season_data, stack):
+    prowl, qbit, _ = stack
+    qbit.v5_login = True
+    services = core.get_setting(conn, "services")
+    services["qbittorrent"]["password"] = "wrong"
+    core.set_setting(conn, "services", services)
+    ctx, _ = restored(conn, tmp_path, make_season, season_data, prowl)
+    with pytest.raises(MsgError) as err:
+        stages.stage_seed(ctx)
+    assert err.value.msg.code == "seed.auth_failed"

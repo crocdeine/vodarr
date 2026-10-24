@@ -14,6 +14,8 @@ from tests.fakes.prowlarr import API_KEY, FakeProwlarr
 from tests.fakes.qbittorrent import PASSWORD as QPASS
 from tests.fakes.qbittorrent import USER as QUSER
 from tests.fakes.qbittorrent import FakeQbit
+from tests.fakes.tmdb import KEY as TMDB_KEY
+from tests.fakes.tmdb import FakeTMDB
 from tests.fakes.torrents import make_torrent, random_bytes
 from tests.fakes.xtream import FakeXtream
 
@@ -59,6 +61,10 @@ def dataset(xt: FakeXtream, prowl: FakeProwlarr, qbit: FakeQbit) -> None:
         name, [(f"{name}.mkv", movie), (f"{name}.nfo", b"notes" * 40)]
     )
     qbit.next_states = ["checkingUP", "checkingUP", "uploading"]
+    xt.series_info["100"]["info"]["tmdb"] = "4242"  # ids known to the fake TMDB
+    xt.vod_info = {
+        "500": {**fx.VOD_INFO["500"], "info": {**fx.VOD_INFO["500"]["info"], "tmdb_id": "777"}}
+    }
 
 
 class Fixed(ThreadingHTTPServer):
@@ -70,20 +76,23 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--base-port", type=int, default=9800)
     args = parser.parse_args()
-    servers = [FakeXtream(), FakeProwlarr(), FakeQbit()]
+    servers = [FakeXtream(), FakeProwlarr(), FakeQbit(), FakeTMDB()]
     for offset, srv in enumerate(servers):
         handler = srv.httpd.RequestHandlerClass
         srv.httpd.server_close()
         srv.httpd = Fixed((args.host, args.base_port + offset), handler)
         srv.url = f"http://{args.host}:{args.base_port + offset}"
         srv.thread = threading.Thread(target=srv.httpd.serve_forever, daemon=True)
-    xt, prowl, qbit = servers
+    xt, prowl, qbit, tmdb = servers
     dataset(xt, prowl, qbit)
     for srv in servers:
         srv.__enter__()
     print(f"Fake Xtream      {xt.url}  user={fx.USER} password={fx.PASSWORD}")
     print(f"Fake Prowlarr    {prowl.url}  apiKey={API_KEY}")
     print(f"Fake qBittorrent {qbit.url}  user={QUSER} password={QPASS}")
+    print(
+        f"Fake TMDB        {tmdb.url}/3  apiKey={TMDB_KEY}  (run VODarr with VODARR_TMDB_URL={tmdb.url}/3)"
+    )
     print("All data is synthetic. Ctrl+C to stop.", flush=True)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())

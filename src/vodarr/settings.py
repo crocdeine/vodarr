@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "services": {
         "prowlarr": {"url": "", "apiKey": ""},
         "qbittorrent": {"url": "", "username": "", "password": ""},
+        "tmdb": {"apiKey": ""},
     },
     "paths": {"downloads": "", "dataRoot": "/data", "qbitDataRoot": "/data"},
     "crossseed": CROSSSEED_DEFAULTS,
@@ -27,6 +28,7 @@ DEFAULTS: dict[str, Any] = {
 SECRETS = [
     ("services", "prowlarr", "apiKey", "url"),
     ("services", "qbittorrent", "password", "url"),
+    ("services", "tmdb", "apiKey", None),  # fixed server: a masked key always means "keep"
 ]
 
 
@@ -52,9 +54,20 @@ def masked(conn: sqlite3.Connection) -> dict[str, Any]:
 
 
 def _check_dir(path: str, code_prefix: str = "settings") -> Path:
+    """An absolute, writable folder. A missing one is created with its parents, but only under
+    an existing top-level folder (e.g. /data): a typo or an unmounted volume is reported, not
+    silently created inside the container."""
     p = Path(path)
-    if not p.is_absolute() or not p.is_dir():
+    if not p.is_absolute() or ".." in p.parts:
         raise MsgError(f"{code_prefix}.path_missing", path=path)
+    if not p.is_dir():
+        top = Path(p.anchor, *p.parts[1:2])
+        if p.exists() or not top.is_dir() or top == p:
+            raise MsgError(f"{code_prefix}.path_missing", path=path)
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            raise MsgError(f"{code_prefix}.path_not_writable", path=path) from None
     if not os.access(p, os.W_OK | os.X_OK):
         raise MsgError(f"{code_prefix}.path_not_writable", path=path)
     return p
@@ -76,7 +89,7 @@ def validate(new: dict[str, Any]) -> None:
         if not any(d.stat().st_dev == dev for d in link_dirs):
             raise MsgError("settings.not_same_filesystem")  # AC-SET-04: hardlinks need it
     for svc in new["services"].values():
-        url = svc.get("url") or ""
+        url = svc.get("url") or ""  # TMDB has none
         if url and not url.startswith(("http://", "https://")):
             raise MsgError("settings.bad_url")
 
@@ -99,7 +112,7 @@ def save(conn: sqlite3.Connection, body: dict[str, Any]) -> dict[str, Any]:
     for section, name, field, server in SECRETS:
         entry, previous = new[section][name], old[section][name]
         if entry[field] == MASK:
-            if entry[server] != previous[server]:
+            if server and entry[server] != previous[server]:
                 raise MsgError("settings.secret_required", service=name)
             entry[field] = previous[field]
         register_secret(entry[field])
@@ -110,13 +123,28 @@ def save(conn: sqlite3.Connection, body: dict[str, Any]) -> dict[str, Any]:
     return masked(conn)
 
 
-def test_service(conn: sqlite3.Connection, service: str) -> Msg | None:
-    """None if the service answers, else the error message (AC-SET-07)."""
-    cfg = load(conn)["services"].get(service)
-    if cfg is None:
+def test_service(conn: sqlite3.Connection, service: str, values: dict | None = None) -> Msg | None:
+    """None if the service answers, else the error message (AC-SET-07). `values` are the
+    form's unsaved fields; a masked secret stands for the stored one only if the address is
+    unchanged, as when saving."""
+    stored = load(conn)["services"].get(service)
+    if stored is None:
         raise MsgError("settings.unknown_section", section=service)
+    cfg = {**stored, **{k: v for k, v in (values or {}).items() if v is not None}}
+    secret = "password" if service == "qbittorrent" else "apiKey"
+    if service == "tmdb":
+        key = stored["apiKey"] if cfg["apiKey"] == MASK else cfg["apiKey"]
+        if not key:
+            return Msg("settings.not_configured", service=service)
+        return services.TMDB(key).test()
+    if cfg[secret] == MASK:
+        if cfg["url"] != stored["url"]:
+            raise MsgError("settings.secret_required", service=service)
+        cfg[secret] = stored[secret]
     if not cfg["url"]:
         return Msg("settings.not_configured", service=service)
+    if not cfg["url"].startswith(("http://", "https://")):
+        raise MsgError("settings.bad_url")
     if service == "prowlarr":
         return services.Prowlarr(cfg["url"], cfg["apiKey"]).test()
     return services.QBittorrent(cfg["url"], cfg["username"], cfg["password"]).test()

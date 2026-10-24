@@ -14,7 +14,7 @@ PACK = "Northwind.Precinct.S01.1080p.WEB-DL-GRP"
 
 @pytest.fixture
 def seeded(conn, tmp_path, make_season, season_data, monkeypatch):
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     monkeypatch.setattr(stages, "SEED_POLL", 0)
     link_dir = tmp_path / "data" / "links"
     link_dir.mkdir(parents=True)
@@ -108,7 +108,7 @@ def test_torrent_shared_with_another_release_stays(conn, tmp_path, seeded):
     rid, _, _, qbit = seeded
     h = conn.execute("SELECT infohash FROM candidates WHERE infohash IS NOT NULL").fetchone()[0]
     conn.execute(
-        "INSERT INTO releases VALUES ('other', (SELECT source_id FROM releases), 'movie', 'x', NULL, 't', NULL, '/d', 0)"
+        "INSERT INTO releases (id, source_id, kind, item_id, season, title, year, dir, created_at) VALUES ('other', (SELECT source_id FROM releases), 'movie', 'x', NULL, 't', NULL, '/d', 0)"
     )
     conn.execute(
         "INSERT INTO candidates (release_id, indexer, title, scope, is_candidate, infohash) VALUES ('other', 'A', 't', 'movie', 1, ?)",

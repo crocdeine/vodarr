@@ -23,9 +23,16 @@ export function settingsView(main, _arg, ctx) {
     }
   }
 
-  async function testService(service) {
+  /** Tests what is typed in the form, saved or not. */
+  async function testService(service, el) {
+    const data = new FormData(el.closest("form"));
+    const values = {
+      prowlarr: { url: data.get("purl"), apiKey: data.get("pkey") },
+      qbittorrent: { url: data.get("qurl"), username: data.get("quser"), password: data.get("qpass") },
+      tmdb: { apiKey: data.get("tkey") },
+    }[service];
     try {
-      const r = await api.post("/settings/test", { service });
+      const r = await api.post("/settings/test", { service, ...values });
       r.ok ? toast(t("settings.test.ok")) : toast(tm(r.error), "error");
     } catch (error) {
       toastError(error);
@@ -97,22 +104,27 @@ export function settingsView(main, _arg, ctx) {
   function services(s) {
     const p = s.services.prowlarr;
     const q = s.services.qbittorrent;
+    const k = s.services.tmdb;
     return card(t("settings.services"), form(async (data) => save({ services: {
       prowlarr: { url: data.get("purl"), apiKey: data.get("pkey") },
       qbittorrent: { url: data.get("qurl"), username: data.get("quser"), password: data.get("qpass") },
+      tmdb: { apiKey: data.get("tkey") },
     } }),
     h("h4", {}, t("settings.prowlarr")),
     alertBox("info", t("settings.prowlarr"), t("settings.snatch_warning")),
     h("div", { class: "grid2" },
       field(t("settings.url"), input({ name: "purl", value: p.url, placeholder: "http://prowlarr:9696" })),
       field(t("settings.api_key"), input({ name: "pkey", type: "password", value: p.apiKey, autocomplete: "off" }))),
-    h("div", {}, button(t("common.test"), () => testService("prowlarr"), { small: true })),
+    h("div", {}, button(t("common.test"), (e) => testService("prowlarr", e.currentTarget), { small: true })),
     h("h4", {}, t("settings.qbittorrent")),
     field(t("settings.url"), input({ name: "qurl", value: q.url, placeholder: "http://qbittorrent:8080" })),
     h("div", { class: "grid2" },
       field(t("auth.username"), input({ name: "quser", value: q.username, autocomplete: "off" })),
       field(t("auth.password"), input({ name: "qpass", type: "password", value: q.password, autocomplete: "off" }))),
-    h("div", {}, button(t("common.test"), () => testService("qbittorrent"), { small: true }))));
+    h("div", {}, button(t("common.test"), (e) => testService("qbittorrent", e.currentTarget), { small: true })),
+    h("h4", {}, t("settings.tmdb")),
+    field(t("settings.api_key"), input({ name: "tkey", type: "password", value: k.apiKey, autocomplete: "off" }), t("settings.tmdb.hint")),
+    h("div", {}, button(t("common.test"), (e) => testService("tmdb", e.currentTarget), { small: true }))));
   }
 
   function folders(s) {

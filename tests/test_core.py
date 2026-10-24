@@ -32,7 +32,7 @@ def test_db_created_with_schema_and_private_modes(cfg):
     } <= tables
     assert mode(cfg) == 0o700
     assert mode(cfg / "vodarr.db") == 0o600
-    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
 
 
@@ -129,7 +129,10 @@ def test_movie_releases_are_unique(cfg):
 
     conn = core.open_db(cfg)
     conn.execute("INSERT INTO sources VALUES ('s', 'n', 'xtream', '{}', 0, 0)")
-    row = "INSERT INTO releases VALUES (?, 's', 'movie', '500', NULL, 't', NULL, 'd', 0)"
+    row = (
+        "INSERT INTO releases (id, source_id, kind, item_id, season, title, year, dir, created_at)"
+        " VALUES (?, 's', 'movie', '500', NULL, 't', NULL, 'd', 0)"
+    )
     conn.execute(row, ("r1",))
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(row, ("r2",))
@@ -154,7 +157,7 @@ def test_concurrent_first_start_migrates_once(cfg):
     assert errors == []
 
 
-def test_existing_db_and_wal_are_private(cfg):
+def test_existing_db_is_private(cfg):
     """AC-CORE-02"""
     cfg.mkdir(mode=0o755)
     (cfg / "vodarr.db").touch(mode=0o644)
@@ -162,7 +165,6 @@ def test_existing_db_and_wal_are_private(cfg):
     core.set_setting(conn, "x", 1)
     assert mode(cfg) == 0o700
     assert mode(cfg / "vodarr.db") == 0o600
-    assert mode(cfg / "vodarr.db-wal") == 0o600
 
 
 def test_atomic_write_leaves_existing_dirs_alone(tmp_path):
@@ -171,3 +173,30 @@ def test_atomic_write_leaves_existing_dirs_alone(tmp_path):
     shared.chmod(0o755)
     core.atomic_write(shared / "x", b"1")
     assert mode(shared) == 0o755
+
+
+def test_wal_database_from_an_earlier_version_is_converted(cfg):
+    """WAL broke on folders shared with a VM (Docker on macOS): older databases switch back."""
+    import sqlite3
+
+    cfg.mkdir(mode=0o700)
+    old = sqlite3.connect(cfg / "vodarr.db")
+    old.execute("PRAGMA journal_mode = WAL")
+    old.close()
+    conn = core.open_db(cfg)
+    assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    assert not (cfg / "vodarr.db-wal").exists()
+
+
+def test_database_from_0_1_0_is_upgraded(cfg):
+    """0.1.1 adds files.media_info and releases.tmdb_id to existing databases."""
+    import sqlite3
+
+    cfg.mkdir(mode=0o700)
+    old = sqlite3.connect(cfg / "vodarr.db", isolation_level=None)
+    old.executescript(core.MIGRATIONS[0] + "; PRAGMA user_version = 1;")
+    old.close()
+    conn = core.open_db(cfg)
+    assert conn.execute("PRAGMA user_version").fetchone()[0] == len(core.MIGRATIONS)
+    assert "media_info" in {r[1] for r in conn.execute("PRAGMA table_info(files)")}
+    assert "tmdb_id" in {r[1] for r in conn.execute("PRAGMA table_info(releases)")}

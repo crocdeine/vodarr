@@ -22,8 +22,9 @@ Explorer ──► download ──► analyse ──► search ──► verify 
 
 1. **Download** — one global queue, one file at a time, resumable (`.part` + HTTP Range,
    5 attempts). Files land in `<downloads>/<source>/<title>/Sxx/` and stay there.
-2. **Analyse** — `ffprobe` reads the release name some providers leave in the track tags.
-   Unknown names are fine.
+2. **Analyse** — `ffprobe` reads the release name some providers leave in the track tags
+   (unknown names are fine) and the technical facts shown on the release page: resolution,
+   codecs, HDR, audio and subtitle languages, duration.
 3. **Search** — Prowlarr searches all your indexers for the title, then keeps:
    - season packs of the right season (`S01`, `Season 1`, `Saison 1`; never `S12` or
      `Saison 10`);
@@ -72,6 +73,8 @@ Volumes: `/config` (database, catalogue cache, reference `.torrent` files, M3U f
 `/config/playlists`) and `/data` (your media, shared with qBittorrent).
 
 ### Settings worth knowing
+
+- **TMDB (optional)** — your own free key from [themoviedb.org](https://www.themoviedb.org/settings/api) (v3 API key or v4 read access token) adds synopsis, poster, genres, rating and cast to the Explorer and to releases. Requests to the TMDB API come from VODarr; posters are loaded by your browser from `image.tmdb.org`.
 
 - **Path seen by qBittorrent** — if qBittorrent mounts the same folder under another path,
   set *Data root (VODarr)* and *Same root as seen by qBittorrent* (e.g. `/data` → `/downloads`).

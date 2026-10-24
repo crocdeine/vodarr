@@ -103,6 +103,7 @@ class FakeXtream(FakeServer):
         self.mode = "ok"  # ok | auth_fail | html | not_list
         self.files: dict[str, bytes] = {}
         self.series_info = copy.deepcopy(SERIES_INFO)  # per instance: tests and demos edit it
+        self.vod_info = copy.deepcopy(VOD_INFO)
         self.routes[("GET", "/player_api.php")] = self.api
         self.routes[("GET", "*")] = self.stream
 
@@ -122,7 +123,7 @@ class FakeXtream(FakeServer):
         if action == "get_series_info":
             return json_response(self.series_info.get(req.query.get("series_id"), []))
         if action == "get_vod_info":
-            return json_response(VOD_INFO.get(req.query.get("vod_id"), []))
+            return json_response(self.vod_info.get(req.query.get("vod_id"), []))
         return json_response({"user_info": {"auth": 1}})
 
     def stream(self, req):

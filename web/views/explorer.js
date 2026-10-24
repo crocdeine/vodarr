@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { icon } from "../icons.js";
 import { t } from "../i18n.js";
-import { button, card, emptyState, input, segmented, select, toast, toastError } from "../ui.js";
+import { button, card, emptyState, fetchMeta, input, metaPanel, segmented, select, toast, toastError } from "../ui.js";
 
 const PAGE = 50;
 
@@ -102,6 +102,8 @@ export function explorerView(main, sourceId, ctx) {
       const path = state.kind === "series" ? "series" : "movies";
       const detail = await api.get(`/sources/${state.source.id}/${path}/${encodeURIComponent(item.id)}`);
       replace(detailPane, state.kind === "series" ? seriesDetail(item, detail) : movieDetail(item, detail));
+      const meta = await fetchMeta(state.kind, { tmdbId: detail.tmdbId, title: detail.name || item.name, year: detail.year || item.year });
+      if (meta && state.item === item) detailPane.querySelector(".content")?.prepend(metaPanel(meta));
     } catch (error) {
       replace(detailPane, h("div", { class: "content" }, emptyState(t(error.code, error.params))));
     }

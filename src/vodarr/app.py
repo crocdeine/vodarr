@@ -142,9 +142,14 @@ class QbitIn(ApiModel):
     password: str | None = Text
 
 
+class TmdbIn(ApiModel):
+    api_key: str | None = Text
+
+
 class ServicesIn(ApiModel):
     prowlarr: ProwlarrIn | None = None
     qbittorrent: QbitIn | None = None
+    tmdb: TmdbIn | None = None
 
 
 class PathsIn(ApiModel):
@@ -173,7 +178,12 @@ class SettingsIn(ApiModel):
 
 
 class ServiceTest(ApiModel):
-    service: Literal["prowlarr", "qbittorrent"]
+    service: Literal["prowlarr", "qbittorrent", "tmdb"]
+    # Unsaved form values to test; omitted fields fall back to the saved settings.
+    url: str | None = Text
+    api_key: str | None = Text
+    username: str | None = Text
+    password: str | None = Text
 
 
 class FilePath(ApiModel):
@@ -423,7 +433,8 @@ def create_app(
 
     @api.post("/settings/test")
     def settings_test(body: ServiceTest):
-        msg = settings.test_service(db(), body.service)
+        values = body.model_dump(by_alias=True, exclude_unset=True, exclude={"service"})
+        msg = settings.test_service(db(), body.service, values)
         return {"ok": msg is None, "error": msg.as_dict() if msg else None}
 
     @api.post("/settings/cross-seed-import")

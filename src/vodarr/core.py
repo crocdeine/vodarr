@@ -68,6 +68,11 @@ MIGRATIONS = [
         added_to_qbit INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX files_queue ON files (dl_status, queued_at);
     """,
+    # 0.1.1: technical metadata read by ffprobe, TMDB id of the title.
+    """
+    ALTER TABLE files ADD COLUMN media_info TEXT;
+    ALTER TABLE releases ADD COLUMN tmdb_id TEXT;
+    """,
 ]
 
 
@@ -119,15 +124,18 @@ def open_db(config_dir: Path) -> sqlite3.Connection:
     conn = conns.get(db_path)
     if conn is not None:
         return conn
-    # Create the file ourselves so it is 600 from the start; SQLite gives -wal/-shm the same mode.
+    # Create the file ourselves so it is 600 from the start; SQLite gives its journal the same mode.
     os.close(os.open(db_path, os.O_CREAT | os.O_WRONLY, 0o600))
     db_path.chmod(0o600)
     conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=True)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA busy_timeout = 5000")
-    for _ in range(50):  # switching to WAL ignores busy_timeout when another opener holds a lock
+    # Rollback journal, not WAL: WAL's memory-mapped -shm breaks on folders shared with a VM
+    # (Docker on macOS lost committed rows, "disk I/O error"). One user: readers waiting a few
+    # ms on a write is fine. Also converts databases created in WAL by earlier versions.
+    for _ in range(50):  # changing the journal mode ignores busy_timeout when a lock is held
         try:
-            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA journal_mode = DELETE")
             break
         except sqlite3.OperationalError:
             time.sleep(0.1)

@@ -35,7 +35,9 @@ def ffprobe_json(path: Path) -> str:
             "-protocol_whitelist",
             "file",
             "-show_entries",
-            "format_tags=title:stream_tags=title",
+            "format=duration,bit_rate,format_name:format_tags=title"
+            ":stream=codec_type,codec_name,profile,width,height,channels,r_frame_rate,"
+            "color_transfer:stream_tags=title,language",
             "-of",
             "json",
             str(path),
@@ -48,16 +50,65 @@ def ffprobe_json(path: Path) -> str:
     return out.stdout
 
 
-def probe_release(path: Path) -> str | None:
-    """Release name written by the provider in the format or track `title` tags, if any."""
+def probe(path: Path) -> tuple[str | None, dict | None]:
+    """(release name from the format or track `title` tags, technical metadata)."""
     try:
         data = json.loads(ffprobe_json(path) or "{}")
     except (OSError, subprocess.SubprocessError, ValueError):
         log.warning("ffprobe unavailable or failed on %s", path.name)
+        return None, None
+    if not isinstance(data, dict):
+        return None, None
+    streams = [st for st in data.get("streams") or [] if isinstance(st, dict)]
+    fmt = data.get("format") if isinstance(data.get("format"), dict) else {}
+    titles = [(fmt.get("tags") or {}).get("title")]
+    titles += [(st.get("tags") or {}).get("title") for st in streams]
+    release = next((t for t in titles if isinstance(t, str) and RELEASE.match(t)), None)
+    return release, media_info(fmt, streams)
+
+
+def _number(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
         return None
-    titles = [((data.get("format") or {}).get("tags") or {}).get("title")]
-    titles += [(s.get("tags") or {}).get("title") for s in data.get("streams") or []]
-    return next((t for t in titles if isinstance(t, str) and RELEASE.match(t)), None)
+
+
+def media_info(fmt: dict, streams: list[dict]) -> dict | None:
+    """The technical facts a release page shows: resolution, codecs, languages, duration."""
+    if not streams:
+        return None
+    video = next((st for st in streams if st.get("codec_type") == "video"), {})
+
+    def lang(st: dict) -> str | None:
+        value = (st.get("tags") or {}).get("language")
+        return value if isinstance(value, str) and value != "und" else None
+
+    fps = None
+    if isinstance(video.get("r_frame_rate"), str) and "/" in video["r_frame_rate"]:
+        num, den = (_number(x) for x in video["r_frame_rate"].split("/", 1))
+        fps = round(num / den, 3) if num and den else None
+    return {
+        "container": fmt.get("format_name"),
+        "duration": _number(fmt.get("duration")),
+        "bitrate": _number(fmt.get("bit_rate")),
+        "video": {
+            "codec": video.get("codec_name"),
+            "profile": video.get("profile"),
+            "width": video.get("width"),
+            "height": video.get("height"),
+            "fps": fps,
+            "hdr": video.get("color_transfer") in ("smpte2084", "arib-std-b67"),
+        }
+        if video
+        else None,
+        "audio": [
+            {"codec": st.get("codec_name"), "channels": st.get("channels"), "language": lang(st)}
+            for st in streams
+            if st.get("codec_type") == "audio"
+        ],
+        "subtitles": [lang(st) for st in streams if st.get("codec_type") == "subtitle"],
+    }
 
 
 def release_files(conn: sqlite3.Connection, release: sqlite3.Row) -> list[sqlite3.Row]:
@@ -79,10 +130,10 @@ def stage_analyse(ctx: Ctx) -> Msg:
         path = file_path(ctx.release, row)
         if not path.is_file():
             raise MsgError("analyse.file_missing", file=row["filename"])
-        name = probe_release(path)
+        name, media = probe(path)
         ctx.conn.execute(
-            "UPDATE files SET size = ?, release_name = ? WHERE id = ?",
-            (path.stat().st_size, name, row["id"]),
+            "UPDATE files SET size = ?, release_name = ?, media_info = ? WHERE id = ?",
+            (path.stat().st_size, name, json.dumps(media) if media else None, row["id"]),
         )
         names.append(name)
         ctx.progress(i, len(rows))
@@ -101,8 +152,21 @@ def words(text: str) -> list[str]:
     return re.findall(r"[a-z0-9]+", fold(text).replace("&", " and "))
 
 
+# Provider tags before titles: "┃FR┃ Title", "[4K] Title", "NF - Title", "FR | Title".
+PROVIDER_PREFIX = re.compile(
+    r"^\s*(?:[┃|│\[(]\s*[^┃|│\])]{1,12}?\s*[┃|│\])]\s*|[A-Z0-9+]{2,5}\s*[-–|:•]\s+)+"
+)
+
+
+def clean_title(title: str) -> str:
+    """The title without provider tags or a trailing (year)."""
+    cleaned = PROVIDER_PREFIX.sub("", title)
+    cleaned = re.sub(r"\s*\(\d{4}\)\s*$", "", cleaned).strip()
+    return cleaned or title
+
+
 def title_words(title: str) -> list[str]:
-    return words(re.sub(r"\(\d{4}\)", " ", title))
+    return words(re.sub(r"\(\d{4}\)", " ", clean_title(title)))
 
 
 def episode_range(title: str, season: int) -> tuple[int, int] | None:
@@ -125,15 +189,24 @@ def _close(size: int | None, local: int) -> bool:
     return bool(size) and local > 0 and abs(size - local) <= TOLERANCE * local
 
 
-def classify_result(result: dict, release: sqlite3.Row, sizes: dict[int | None, int]):
+def classify_result(
+    result: dict,
+    release: sqlite3.Row,
+    sizes: dict[int | None, int],
+    titles: list[str] | None = None,
+    years: list[str] | None = None,
+):
     """(scope, is_candidate) for a search result, or None if it is not this season / movie.
-    `sizes` maps local episode number (None for a movie) → size."""
-    if not set(title_words(release["title"])) <= set(words(result["title"])):
+    `sizes` maps local episode number (None for a movie) → size; `titles` are the names the
+    title may carry (catalogue, original, English), all words of one of them must match."""
+    found = set(words(result["title"]))
+    if not any(set(title_words(t)) <= found for t in titles or [release["title"]]):
         return None
     size = result.get("size") if isinstance(result.get("size"), int) else None
     if release["kind"] == "movie":
-        year = release["year"] or (re.search(r"\((\d{4})\)", release["title"]) or [None, None])[1]
-        if year and not re.search(rf"(?<!\d){re.escape(year)}(?!\d)", result["title"]):
+        # Providers' years are sometimes wrong: TMDB's year is accepted too.
+        years = [y for y in years or [release_year(release)] if y]
+        if years and not any(re.search(rf"(?<!\d){y}(?!\d)", result["title"]) for y in years):
             return None
         return "movie", _close(size, sum(sizes.values()))
     season = release["season"]
@@ -145,6 +218,39 @@ def classify_result(result: dict, release: sqlite3.Row, sizes: dict[int | None, 
     if is_season_pack(result["title"], season):
         return "pack", _close(size, sum(sizes.values()))
     return None
+
+
+def release_year(release: sqlite3.Row) -> str | None:
+    return release["year"] or (re.search(r"\((\d{4})\)", release["title"]) or [None, None])[1]
+
+
+def search_titles(ctx: Ctx) -> tuple[list[str], list[str]]:
+    """Names to search: the catalogue title, plus TMDB's original and English titles when a
+    TMDB key is set (catalogues are often localised, releases often use the original title),
+    and the accepted years (the provider's, plus TMDB's)."""
+    from vodarr import metadata  # noqa: PLC0415 - metadata imports settings, which imports us
+
+    release = ctx.release
+    titles = [release["title"]]
+    try:
+        tmdb_id = release["tmdb_id"]
+        year = release_year(release)
+        meta = metadata.lookup(
+            ctx.conn,
+            ctx.config_dir,
+            release["kind"],
+            tmdb_id,
+            clean_title(release["title"]),
+            year,
+            "en",
+        )
+    except MsgError:
+        meta = None  # TMDB down or refusing: search with the catalogue title alone
+    for extra in (meta or {}).get("original_title"), (meta or {}).get("title"):
+        if extra and set(title_words(extra)) not in [set(title_words(t)) for t in titles]:
+            titles.append(extra)
+    years = [y for y in (release_year(release), (meta or {}).get("year")) if y]
+    return titles, list(dict.fromkeys(years))
 
 
 def prowlarr(conn: sqlite3.Connection) -> services.Prowlarr | None:
@@ -160,8 +266,13 @@ def stage_search(ctx: Ctx) -> Msg:
         raise Skip("search.no_prowlarr")
     release = ctx.release
     sizes = {r["episode"]: r["size"] or 0 for r in release_files(ctx.conn, release)}
-    query = " ".join(title_words(release["title"]))
-    results = client.search(query)
+    titles, years = search_titles(ctx)
+    results, seen = [], set()
+    for title in titles:  # catalogue title, then original / English title from TMDB
+        for r in client.search(" ".join(title_words(title))):
+            if r["downloadUrl"] not in seen:
+                seen.add(r["downloadUrl"])
+                results.append(r)
     kept = 0
     trackers = set()
     with locked(ctx.conn):
@@ -178,7 +289,7 @@ def stage_search(ctx: Ctx) -> Msg:
             )
         }
         for r in results:
-            found = classify_result(r, release, sizes)
+            found = classify_result(r, release, sizes, titles, years)
             if not found or r["downloadUrl"] in known:
                 continue
             scope, is_candidate = found

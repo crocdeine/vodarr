@@ -22,7 +22,7 @@ PACK = "Northwind.Precinct.S01.1080p.WEB-DL-GRP"
 @pytest.fixture(autouse=True)
 def fresh_throttle(monkeypatch):
     monkeypatch.setattr(auth, "throttle", auth.Throttle())
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     monkeypatch.setattr(stages, "SEED_POLL", 0)
 
 
@@ -265,3 +265,18 @@ def test_api_key_works_for_routes(env):
     c.cookies.clear()
     assert c.get("/api/sources", headers={"X-Api-Key": key}).status_code == 200
     assert c.get("/api/sources").status_code == 401
+
+
+def test_release_detail_carries_technical_metadata(env):
+    c, xt, _, _, tmp_path = env
+    sid = add_source(c, xt)["id"]
+    rid = c.post(
+        "/api/releases", headers=H, json={"sourceId": sid, "kind": "movie", "itemId": "500"}
+    ).json()["id"]
+    conn = open_db(tmp_path / "config")
+    conn.execute(
+        "UPDATE files SET media_info = ?",
+        (json.dumps({"video": {"codec": "hevc", "height": 1080}, "audio": [], "subtitles": []}),),
+    )
+    f = c.get(f"/api/releases/{rid}").json()["fileList"][0]
+    assert f["media"]["video"] == {"codec": "hevc", "height": 1080}

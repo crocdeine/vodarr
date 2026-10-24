@@ -4,8 +4,8 @@
 
 import { api } from "../api.js";
 import { h, replace } from "../dom.js";
-import { bytes, t, tm } from "../i18n.js";
-import { alertBox, button, card, confirmDialog, emptyState, pill, progress, segmented, timeline, toast, toastError } from "../ui.js";
+import { bytes, language, t, tm } from "../i18n.js";
+import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, pill, progress, segmented, timeline, toast, toastError } from "../ui.js";
 
 const FILTERS = [
   ["all", null],
@@ -15,6 +15,43 @@ const FILTERS = [
   ["error", ["error"]],
 ];
 const TABS = ["overview", "download", "identification", "crossseed"];
+
+// Technical metadata read by ffprobe after download (0.1.1).
+const BIBLIOGRAPHIC = { fre: "fr", ger: "de", dut: "nl", chi: "zh", cze: "cs", gre: "el", per: "fa", rum: "ro", slo: "sk", alb: "sq", arm: "hy", baq: "eu", geo: "ka", ice: "is", mac: "mk", may: "ms", wel: "cy" };
+const CHANNELS = { 1: "1.0", 2: "2.0", 6: "5.1", 8: "7.1" };
+
+function languageName(code) {
+  if (!code) return null;
+  try {
+    return new Intl.DisplayNames([language()], { type: "language" }).of(BIBLIOGRAPHIC[code] || code);
+  } catch {
+    return code;
+  }
+}
+
+function videoLine(media) {
+  const v = media?.video;
+  if (!v) return null;
+  const res = v.height >= 2000 ? "2160p" : v.height ? `${v.height}p` : null;
+  return [res, v.codec?.toUpperCase(), v.profile, v.hdr && "HDR", v.fps && `${v.fps} fps`].filter(Boolean).join(" · ");
+}
+
+function audioLine(media) {
+  return (media?.audio || []).map((a) =>
+    [a.codec?.toUpperCase(), CHANNELS[a.channels] || (a.channels && `${a.channels} ch`), languageName(a.language) && `(${languageName(a.language)})`].filter(Boolean).join(" ")).join(", ");
+}
+
+function techFacts(media) {
+  if (!media) return [];
+  const subs = (media.subtitles || []).map(languageName).filter(Boolean);
+  return [
+    [t("releases.tech.video"), videoLine(media)],
+    [t("releases.tech.audio"), audioLine(media)],
+    [t("releases.tech.subtitles"), subs.join(", ")],
+    [t("releases.tech.duration"), media.duration ? t("releases.tech.minutes", { minutes: Math.round(media.duration / 60) }) : null],
+    [t("releases.tech.container"), media.container?.split(",")[0]],
+  ].filter(([, value]) => value);
+}
 
 export function releasesView(main, releaseId, ctx) {
   const state = { filter: "all", tab: "overview", selected: releaseId, items: [], seen: {} };
@@ -105,6 +142,7 @@ export function releasesView(main, releaseId, ctx) {
   function overview(detail) {
     const failed = detail.stages.find((s) => s.state === "error");
     return [
+      state.meta?.id === detail.id && metaPanel(state.meta.data),
       ...partialAlerts(detail),
       failed && alertBox("error", t(`stage.${failed.name}`), tm(failed.message),
         button(t("releases.retry_from", { stage: t(`stage.${failed.name}`) }), () => retry(failed.name), { small: true })),
@@ -112,7 +150,9 @@ export function releasesView(main, releaseId, ctx) {
       card(null,
         h("div", { class: "kv" }, h("span", {}, t("releases.status")), pill(detail.status)),
         h("div", { class: "kv" }, h("span", {}, t("releases.files")), h("span", { class: "num" }, String(detail.files))),
-        h("div", { class: "kv" }, h("span", {}, t("releases.size")), h("span", { class: "num" }, bytes(detail.total)))),
+        h("div", { class: "kv" }, h("span", {}, t("releases.size")), h("span", { class: "num" }, bytes(detail.total))),
+        techFacts(detail.fileList.find((f) => f.media)?.media).map(([label, value]) =>
+          h("div", { class: "kv" }, h("span", {}, label), h("span", {}, value)))),
     ];
   }
 
@@ -121,7 +161,8 @@ export function releasesView(main, releaseId, ctx) {
       h("thead", {}, h("tr", {}, h("th", {}, t("releases.file")), h("th", {}, t("releases.release_name")),
         h("th", { class: "r" }, t("releases.size")), h("th", {}, t("releases.status")))),
       h("tbody", {}, detail.fileList.map((f) => h("tr", {},
-        h("td", {}, f.filename, f.status === "running" && progress(f.done, f.total)),
+        h("td", {}, f.filename, f.status === "running" && progress(f.done, f.total),
+          f.media && h("small", {}, [videoLine(f.media), audioLine(f.media)].filter(Boolean).join(" — "))),
         h("td", {}, h("small", {}, f.releaseName || t("common.unknown"))),
         h("td", { class: "r num" }, bytes(f.size ?? f.total)),
         h("td", {}, pill(f.status), f.error && h("small", {}, t(f.error, {}))))))));
@@ -193,6 +234,16 @@ export function releasesView(main, releaseId, ctx) {
     }
     try {
       const detail = await api.get(`/releases/${state.selected}`);
+      if (state.meta?.id !== detail.id) {
+        state.meta = { id: detail.id, data: null };
+        fetchMeta(detail.kind, { tmdbId: detail.tmdbId, title: detail.title, year: detail.year }).then((data) => {
+          if (state.meta?.id === detail.id && data) {
+            state.meta.data = data;
+            state.seen.detail = null;
+            drawDetail(detail);
+          }
+        });
+      }
       if (changed("detail", detail)) drawDetail(detail);
     } catch (error) {
       replace(detailPane, h("div", { class: "content" }, emptyState(t(error.code, error.params))));

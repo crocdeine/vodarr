@@ -27,8 +27,9 @@ NAMESPACES = (
     "source",
     "verify",
     "prowlarr",
+    "tmdb",
 )
-SERVICES = ("search", "verify", "seed", "prowlarr")  # f"{service}.<reason>" in services.py
+SERVICES = ("search", "verify", "seed", "prowlarr", "tmdb")  # f"{service}.<reason>" in services.py
 
 
 def backend_codes() -> set[str]:

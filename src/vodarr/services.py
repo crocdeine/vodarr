@@ -3,6 +3,7 @@
 import http.client
 import json
 import logging
+import os
 import re
 import urllib.error
 import urllib.parse
@@ -95,11 +96,15 @@ class Prowlarr:
 
 
 class QBittorrent:
-    """WebUI API v2 (qBittorrent >= 4.6): SID cookie session, re-login once on 403."""
+    """WebUI API v2 (qBittorrent >= 4.6). Session cookie named SID (before 5.x) or
+    QBT_SID_<port> (5.x); login answers 200 "Ok." or 204. Re-login once on 403. A qBittorrent
+    that skips authentication for this client (whitelisted subnet) works without a cookie."""
+
+    COOKIE = re.compile(r"\b((?:QBT_)?SID(?:_\d+)?)=([^;,\s]+)")
 
     def __init__(self, url: str, username: str, password: str):
         self.url, self.username, self.password = url.rstrip("/"), username, password
-        self.sid: str | None = None
+        self.cookie: str | None = None  # "name=value", or "" when no session is needed
         register_secret(password)
 
     def login(self) -> None:
@@ -111,11 +116,18 @@ class QBittorrent:
             {"Content-Type": "application/x-www-form-urlencoded"},
             form.encode(),
         )
-        sid = re.search(r"SID=([^;]+)", headers.get("Set-Cookie") or "")
-        if body.strip() != b"Ok." or not sid:
+        if body.strip() == b"Fails.":
             raise MsgError("seed.auth_failed")
-        self.sid = sid.group(1)
-        register_secret(self.sid)
+        found = self.COOKIE.search(", ".join(headers.get_all("Set-Cookie") or []))
+        if found:
+            self.cookie = f"{found.group(1)}={found.group(2)}"
+            register_secret(found.group(2))
+            return
+        try:  # no session cookie: only fine if qBittorrent does not ask this client to log in
+            _request(f"{self.url}/api/v2/app/version", "seed", 1 << 10)
+        except MsgError:
+            raise MsgError("seed.auth_failed") from None
+        self.cookie = ""
 
     def _call(
         self,
@@ -125,9 +137,9 @@ class QBittorrent:
         limit: int = 50 << 20,
     ) -> bytes:
         for attempt in (1, 2):
-            if not self.sid:
+            if self.cookie is None:
                 self.login()
-            headers = {"Cookie": f"SID={self.sid}"}
+            headers = {"Cookie": self.cookie} if self.cookie else {}
             if content_type:
                 headers["Content-Type"] = content_type
             try:
@@ -135,7 +147,7 @@ class QBittorrent:
             except MsgError as e:
                 if e.msg.code != "seed.auth_failed" or attempt == 2:
                     raise
-                self.sid = None  # session expired: log in again (AC-SEED-01)
+                self.cookie = None  # session expired: log in again (AC-SEED-01)
         raise AssertionError("unreachable")
 
     def _form(self, path: str, fields: dict[str, str]) -> bytes:
@@ -208,6 +220,81 @@ class QBittorrent:
         try:
             self.login()
             self._call("app/version")
+        except MsgError as e:
+            return e.msg
+        return None
+
+
+class TMDB:
+    """The Movie Database: overview, poster, genres, cast. The user's own key: a v3 API key
+    (sent as a query parameter) or a v4 read access token (sent as a Bearer header)."""
+
+    BASE = "https://api.themoviedb.org/3"
+    IMAGES = "https://image.tmdb.org/t/p/"
+
+    def __init__(self, api_key: str, base: str | None = None):
+        # VODARR_TMDB_URL points demos and tests at a fake TMDB.
+        base = base or os.environ.get("VODARR_TMDB_URL") or self.BASE
+        self.api_key, self.base = api_key.strip(), base.rstrip("/")
+        register_secret(self.api_key)
+
+    def _get(self, path: str, **params: str) -> dict:
+        headers = {"Accept": "application/json"}
+        if self.api_key.startswith("eyJ"):  # v4 token (JWT)
+            headers["Authorization"] = f"Bearer {self.api_key}"
+        else:
+            params["api_key"] = self.api_key
+        body = _get(f"{self.base}{path}?{urllib.parse.urlencode(params)}", headers, "tmdb", 2 << 20)
+        try:
+            data = json.loads(body)
+        except ValueError:
+            raise MsgError("tmdb.invalid_response") from None
+        if not isinstance(data, dict):
+            raise MsgError("tmdb.invalid_response")
+        return data
+
+    def find(self, kind: str, title: str, year: str | None, language: str) -> str | None:
+        """Best TMDB id for a title (and year), or None."""
+        path, year_key = (
+            ("/search/tv", "first_air_date_year") if kind == "series" else ("/search/movie", "year")
+        )
+        params = {"query": title, "language": language}
+        if year:
+            params[year_key] = year
+        results = self._get(path, **params).get("results") or []
+        first = next((r for r in results if isinstance(r, dict) and r.get("id")), None)
+        return str(first["id"]) if first else None
+
+    def details(self, kind: str, tmdb_id: str, language: str) -> dict:
+        section = "tv" if kind == "series" else "movie"
+        path = f"/{section}/{urllib.parse.quote(tmdb_id, safe='')}"
+        d = self._get(path, language=language, append_to_response="credits")
+        date = d.get("first_air_date") or d.get("release_date") or ""
+
+        def image(p: object, size: str) -> str | None:
+            return f"{self.IMAGES}{size}{p}" if isinstance(p, str) and p.startswith("/") else None
+
+        cast = ((d.get("credits") or {}).get("cast") or [])[:6]
+        return {
+            "tmdb_id": str(d.get("id") or tmdb_id),
+            "title": d.get("name") or d.get("title"),
+            "original_title": d.get("original_name") or d.get("original_title"),
+            "overview": d.get("overview") or None,
+            "tagline": d.get("tagline") or None,
+            "year": date[:4] or None,
+            "genres": [g.get("name") for g in d.get("genres") or [] if isinstance(g, dict)],
+            "rating": d.get("vote_average"),
+            "runtime": d.get("runtime") or (d.get("episode_run_time") or [None])[0],
+            "seasons": d.get("number_of_seasons"),
+            "poster": image(d.get("poster_path"), "w342"),
+            "backdrop": image(d.get("backdrop_path"), "w780"),
+            "cast": [c.get("name") for c in cast if isinstance(c, dict) and c.get("name")],
+            "url": f"https://www.themoviedb.org/{section}/{d.get('id')}",
+        }
+
+    def test(self) -> Any:
+        try:
+            self._get("/configuration")
         except MsgError as e:
             return e.msg
         return None

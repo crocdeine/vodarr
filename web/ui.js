@@ -2,7 +2,8 @@
 
 import { h } from "./dom.js";
 import { icon } from "./icons.js";
-import { t, tm } from "./i18n.js";
+import { language, t, tm } from "./i18n.js";
+import { api } from "./api.js";
 
 export function pill(status, label) {
   return h("span", { class: `pill s-${status}` }, label ?? t(`status.${status}`));
@@ -118,3 +119,40 @@ export function emptyState(text) {
 }
 
 
+
+/** TMDB details for a title (0.1.1): null without a key or a match; never blocks the page. */
+export async function fetchMeta(kind, { tmdbId, title, year }) {
+  const params = new URLSearchParams({ kind, lang: language() });
+  if (tmdbId) params.set("tmdbId", tmdbId);
+  if (title) params.set("title", title.replace(/\s*\(\d{4}\)\s*$/, ""));
+  if (year && /^\d{4}$/.test(year)) params.set("year", year);
+  try {
+    return (await api.get(`/metadata?${params}`)).data;
+  } catch {
+    return null;
+  }
+}
+
+export function metaPanel(meta) {
+  if (!meta) return null;
+  const facts = [
+    meta.year,
+    meta.runtime && t("meta.runtime", { minutes: meta.runtime }),
+    meta.seasons && t("meta.seasons", { count: meta.seasons }),
+    typeof meta.rating === "number" && meta.rating > 0 && `★ ${meta.rating.toFixed(1)}`,
+  ].filter(Boolean);
+  return h("section", { class: "card meta" },
+    meta.poster && /^https:\/\//.test(meta.poster)
+      ? h("img", {
+          class: "meta-poster", src: meta.poster, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+          onerror: (e) => e.currentTarget.remove(),
+        })
+      : null,
+    h("div", { class: "card-b stack" },
+      meta.tagline && h("p", { class: "muted" }, meta.tagline),
+      h("div", { class: "inline muted num" }, facts.join(" · ")),
+      meta.genres?.length > 0 && h("div", { class: "inline" }, meta.genres.map((g) => h("span", { class: "chip" }, g))),
+      meta.overview && h("p", {}, meta.overview),
+      meta.cast?.length > 0 && h("p", { class: "muted" }, t("meta.cast_line", { names: meta.cast.join(", ") })),
+      meta.url && h("a", { href: meta.url, target: "_blank", rel: "noopener noreferrer", class: "faint" }, t("meta.source"))));
+}

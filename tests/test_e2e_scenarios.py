@@ -112,7 +112,7 @@ class Stack:
 @pytest.fixture
 def stack(conn, tmp_path, monkeypatch):
     monkeypatch.setattr(stages, "SEED_POLL", 0)
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     with FakeXtream() as xtream, FakeProwlarr() as prowl, FakeQbit() as qbit:
         qbit.next_states = ["checkingUP", "uploading"]
         yield Stack(conn, tmp_path, xtream, prowl, qbit)

@@ -180,3 +180,75 @@ def test_year_must_be_a_whole_number(conn, tmp_path, make_season, prowl):
     prowl.add("Nimbus", "Harbour.Lights.120201.1080p-GRP", 50_000)
     run_search(conn, tmp_path, rid)
     assert candidates(conn, rid) == []
+
+
+@pytest.mark.parametrize(
+    "raw, clean",
+    [
+        ("┃FR┃ Embrassez qui vous voudrez", "Embrassez qui vous voudrez"),
+        ("TOP - Let Her Out", "Let Her Out"),
+        ("NF - Octonauts & the Great Barrier Reef (2020)", "Octonauts & the Great Barrier Reef"),
+        ("[4K] Dune", "Dune"),
+        ("FR | Les Misérables", "Les Misérables"),
+        ("|EN| Heat", "Heat"),
+        ("M - A Film", "M - A Film"),  # one-letter title kept
+        ("Mission: Impossible", "Mission: Impossible"),  # a real colon is not a tag
+    ],
+)
+def test_provider_prefixes_are_removed(raw, clean):
+    """Real run: provider tags made every search miss (all title words must match)."""
+    assert stages.clean_title(raw) == clean
+
+
+def test_prefixed_catalogue_title_still_matches(conn, tmp_path, make_season, prowl):
+    rid, _ = make_season([b"m" * 50_000], kind="movie", title="┃FR┃ Harbour Lights", year="2020")
+    conn.execute("UPDATE files SET size = 50000")
+    prowl.add("Nimbus", "Harbour.Lights.2020.1080p.BluRay-GRP", 50_000)
+    run_search(conn, tmp_path, rid)
+    assert candidates(conn, rid) == [("Harbour.Lights.2020.1080p.BluRay-GRP", "movie", True)]
+
+
+def test_original_title_from_tmdb_is_searched(conn, tmp_path, make_season, prowl, monkeypatch):
+    """A French catalogue title, an English release: TMDB gives the other name."""
+    from tests.fakes.tmdb import KEY, FakeTMDB
+    from vodarr import services
+
+    with FakeTMDB() as tmdb:
+        monkeypatch.setattr(services.TMDB, "BASE", tmdb.url + "/3")
+        svc = core.get_setting(conn, "services")
+        svc["tmdb"] = {"apiKey": KEY}
+        core.set_setting(conn, "services", svc)
+        rid, _ = make_season(
+            [b"m" * 50_000], kind="movie", title="┃FR┃ Les Feux du Port", year="2020"
+        )
+        conn.execute("UPDATE files SET size = 50000")
+        conn.execute("UPDATE releases SET tmdb_id = '777'")
+        prowl.add("Nimbus", "Harbour.Lights.2020.1080p.BluRay-GRP", 50_000)
+        run_search(conn, tmp_path, rid)
+    assert candidates(conn, rid) == [("Harbour.Lights.2020.1080p.BluRay-GRP", "movie", True)]
+    queries = [r.query["query"] for r in prowl.requests if r.path == "/api/v1/search"]
+    assert queries == ["les feux du port", "harbour lights"]
+
+
+def test_wrong_provider_tmdb_id_does_not_change_the_year(
+    conn, tmp_path, make_season, prowl, monkeypatch
+):
+    """Real run: a 2021 film carried the TMDB id of a 2023 film with the same title. TMDB's
+    year contradicts the source, so that id is ignored and the 2021 release is the match."""
+    from tests.fakes.tmdb import KEY, FakeTMDB
+    from vodarr import services
+
+    with FakeTMDB() as tmdb:
+        monkeypatch.setattr(services.TMDB, "BASE", tmdb.url + "/3")
+        svc = core.get_setting(conn, "services")
+        svc["tmdb"] = {"apiKey": KEY}
+        core.set_setting(conn, "services", svc)
+        rid, _ = make_season(
+            [b"m" * 50_000], kind="movie", title="FR - Harbour Lights (2020)", year="2020"
+        )
+        conn.execute("UPDATE files SET size = 50000")
+        conn.execute("UPDATE releases SET tmdb_id = '778'")  # the 2023 film
+        prowl.add("Nimbus", "Harbour.Lights.2020.FRENCH.1080p.WEB-GRP", 50_000)
+        prowl.add("Nimbus", "Harbour.Lights.2023.1080p.WEB-DL-GRP", 50_000)
+        run_search(conn, tmp_path, rid)
+    assert candidates(conn, rid) == [("Harbour.Lights.2020.FRENCH.1080p.WEB-GRP", "movie", True)]

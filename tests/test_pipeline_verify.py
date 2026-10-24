@@ -47,7 +47,7 @@ def cands(conn, rid):
 
 def test_identical_pack_with_padding(conn, tmp_path, make_season, season_data, prowl, monkeypatch):
     """AC-VER-04, E1 (verification part)"""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     total = sum(map(len, season_data))
     rid, ctx, _ = setup(
         conn,
@@ -74,7 +74,7 @@ def test_stop_at_first_identical_per_tracker_and_scope(
     conn, tmp_path, make_season, season_data, prowl, monkeypatch
 ):
     """AC-VER-01, E7: closest size first; later .torrent files are not downloaded."""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     total = sum(map(len, season_data))
     good = pack_torrent(season_data)
     results = [
@@ -95,7 +95,7 @@ def test_stop_at_first_identical_per_tracker_and_scope(
 
 def test_partial_candidate(conn, tmp_path, make_season, season_data, prowl, monkeypatch):
     """AC-VER-06, E2"""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     other = [*season_data[:2], random_bytes(len(season_data[2]), 77)]
     rid, ctx, _ = setup(
         conn,
@@ -114,7 +114,7 @@ def test_unreadable_and_v2_candidates_are_set_aside(
     conn, tmp_path, make_season, season_data, prowl, monkeypatch
 ):
     """AC-VER-07: the other candidates still run."""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     total = sum(map(len, season_data))
     results = [
         ("Nimbus", "Northwind.Precinct.S01.A-X", total, b"garbage"),
@@ -134,7 +134,7 @@ def test_unreadable_and_v2_candidates_are_set_aside(
 
 def test_no_candidates_skips(conn, tmp_path, make_season, season_data, prowl, monkeypatch):
     """E4"""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     rid, ctx, _ = setup(conn, tmp_path, make_season, season_data, prowl, [])
     with pytest.raises(pipeline.Skip) as skip:
         stages.stage_verify(ctx)
@@ -145,7 +145,7 @@ def test_isolated_episode_and_pack_both_verified(
     conn, tmp_path, make_season, season_data, prowl, monkeypatch
 ):
     """AC-VER-01, E9: pack on A, single episode on B."""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     ep2 = make_torrent(NAMES[1], [(NAMES[1], season_data[1])])
     results = [
         ("Nimbus", PACK, sum(map(len, season_data)), pack_torrent(season_data)),
@@ -162,7 +162,7 @@ def test_download_url_always_goes_to_the_configured_prowlarr(
     """the key only goes to Prowlarr, whatever host downloadUrl names."""
     from tests.fakes.http import FakeServer
 
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     with FakeServer() as evil:
         rid, ctx, _ = setup(
             conn,
@@ -200,7 +200,7 @@ def test_rate_limit_during_verify_stops_the_stage(
     from tests.fakes.http import Response
     from vodarr.core import MsgError
 
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     total = sum(map(len, season_data))
     rid, ctx, _ = setup(
         conn,
@@ -221,7 +221,7 @@ def test_research_after_seed_keeps_references(
     conn, tmp_path, make_season, season_data, prowl, monkeypatch
 ):
     """a retry from search must not orphan links or qBittorrent torrents."""
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     rid, ctx, _ = setup(
         conn,
         tmp_path,

@@ -26,7 +26,8 @@ Explorer ──► téléchargement ──► analyse ──► recherche ──
    HTTP Range, 5 essais). Les fichiers arrivent dans `<téléchargements>/<source>/<titre>/Sxx/`
    et y restent.
 2. **Analyse** — `ffprobe` lit le nom de release que certains fournisseurs laissent dans les
-   tags des pistes. Un nom inconnu n'empêche rien.
+   tags des pistes (un nom inconnu n'empêche rien) et les caractéristiques techniques affichées
+   dans la fiche : résolution, codecs, HDR, langues audio et sous-titres, durée.
 3. **Recherche** — Prowlarr cherche le titre sur tous vos indexeurs, puis VODarr retient :
    - les packs de la bonne saison (`S01`, `Season 1`, `Saison 1` ; jamais `S12` ni `Saison 10`) ;
    - les épisodes isolés et les plages (`S01E05`, `S01E05-E06`) que vous avez en local ;
@@ -79,6 +80,8 @@ Volumes : `/config` (base, cache du catalogue, `.torrent` de référence, fichie
 `/config/playlists`) et `/data` (vos médias, partagés avec qBittorrent).
 
 ### Réglages à connaître
+
+- **TMDB (facultatif)** — votre propre clé gratuite sur [themoviedb.org](https://www.themoviedb.org/settings/api) (clé API v3 ou jeton de lecture v4) ajoute synopsis, affiche, genres, note et distribution dans l'Explorer et les releases. Les appels à l'API TMDB partent de VODarr ; les affiches sont chargées par votre navigateur depuis `image.tmdb.org`.
 
 - **Chemin vu par qBittorrent** — si qBittorrent monte le même dossier sous un autre chemin,
   renseignez *Racine des données (VODarr)* et *Même racine vue par qBittorrent* (par exemple

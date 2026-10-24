@@ -912,3 +912,36 @@ dialog::backdrop {
 .card:has(> .stages) {
   overflow-x: auto;
 }
+
+/* ---------- title details (TMDB) ---------- */
+
+.meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: start;
+}
+
+.meta p {
+  margin: 0;
+}
+
+.meta-poster {
+  width: var(--meta-poster);
+  aspect-ratio: 2 / 3;
+  object-fit: cover;
+  display: block;
+}
+
+.chip {
+  font-size: var(--fs-xs);
+  padding: var(--focus-ring) var(--s-2);
+  border-radius: var(--r-pill);
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+@media (max-width: 960px) {
+  .meta {
+    grid-template-columns: 1fr;
+  }
+}

@@ -41,7 +41,7 @@ def log_output():
 
 def test_no_secret_in_logs_or_responses(tmp_path, monkeypatch, log_output):
     monkeypatch.setattr(auth, "throttle", auth.Throttle())
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     monkeypatch.setattr(stages, "SEED_POLL", 0)
     dl, links = tmp_path / "data" / "vod", tmp_path / "data" / "links"
     dl.mkdir(parents=True)

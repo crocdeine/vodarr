@@ -99,7 +99,7 @@ def test_masked_secret_refused_when_server_changes(client):
 def test_paths_must_exist_be_writable_and_share_filesystem(client, dirs, tmp_path, monkeypatch):
     """AC-SET-04"""
     dl, links = dirs
-    r = put(client, {"paths": {"downloads": str(tmp_path / "missing")}})
+    r = put(client, {"paths": {"downloads": "/vodarr-no-such-top-folder/vod"}})
     assert r.json()["error"]["code"] == "settings.path_missing"
     os.chmod(links, 0o500)
     try:
@@ -226,3 +226,51 @@ def test_partial_update_keeps_other_fields(client):
         st.load(open_db(client.app.state.config_dir))["services"]["prowlarr"]["apiKey"]
         == "real-key-123"
     )
+
+
+def test_service_test_uses_unsaved_form_values(client):
+    """Real run: Test checked the saved settings, so testing before saving always failed."""
+    with FakeProwlarr() as prowl, FakeQbit(v5_login=True) as qbit:
+        r = client.post(
+            "/api/settings/test",
+            json={"service": "prowlarr", "url": prowl.url, "apiKey": API_KEY},
+            headers=H,
+        )
+        assert r.json() == {"ok": True, "error": None}
+        r = client.post(
+            "/api/settings/test",
+            json={"service": "qbittorrent", "url": qbit.url, "username": QUSER, "password": QPASS},
+            headers=H,
+        )
+        assert r.json()["ok"] is True
+        assert (
+            client.get("/api/settings").json()["services"]["prowlarr"]["url"] == ""
+        )  # nothing saved
+        put(client, {"services": {"prowlarr": {"url": prowl.url, "apiKey": API_KEY}}})
+        r = client.post(
+            "/api/settings/test",
+            json={"service": "prowlarr", "url": prowl.url, "apiKey": "••••"},
+            headers=H,
+        )
+        assert r.json()["ok"] is True  # masked key, same address: the stored key is used
+        r = client.post(
+            "/api/settings/test",
+            json={"service": "prowlarr", "url": "http://elsewhere:9696", "apiKey": "••••"},
+            headers=H,
+        )
+        assert r.json()["error"]["code"] == "settings.secret_required"
+
+
+def test_missing_folders_are_created_under_an_existing_top_folder(client, tmp_path):
+    """Real run: folders typed in Settings did not exist yet; they are created on save."""
+    dl = tmp_path / "data" / "vodarr" / "vod"
+    links = tmp_path / "data" / "vodarr" / "links"
+    r = put(client, {"paths": {"downloads": str(dl)}, "crossseed": {"linkDirs": [str(links)]}})
+    assert r.status_code == 200, r.text
+    assert dl.is_dir() and links.is_dir()
+
+
+@pytest.mark.parametrize("path", ["/vodarr-unmounted/vod", "relative/vod", "/data/../etc/x"])
+def test_folders_are_not_created_outside_an_existing_top_folder(client, path):
+    r = put(client, {"paths": {"downloads": path}})
+    assert r.json()["error"]["code"] == "settings.path_missing"

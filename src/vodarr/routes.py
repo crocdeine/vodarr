@@ -14,7 +14,7 @@ from typing import Literal
 from fastapi import APIRouter, Query
 from pydantic import Field
 
-from vodarr import downloads, pipeline, settings, sources, stages
+from vodarr import downloads, metadata, pipeline, settings, sources, stages
 from vodarr.core import MASK, MsgError, register_secret
 from vodarr.schemas import ApiModel
 
@@ -113,6 +113,7 @@ def release_out(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "year": row["year"],
         "created_at": row["created_at"],
         "status": pipeline.status(conn, row["id"]),
+        "tmdb_id": row["tmdb_id"],
         "files": files["n"],
         "done": files["done"],
         "total": files["total"],
@@ -183,6 +184,7 @@ def release_detail(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
                 "done": f["dl_done"],
                 "total": f["dl_total"],
                 "error": f["dl_error"],
+                "media": json.loads(f["media_info"]) if f["media_info"] else None,
             }
             for f in file_rows
         ],
@@ -379,6 +381,8 @@ def register(
             episodes,
             Path(root),
         )
+        if detail.get("tmdb_id"):
+            conn.execute("UPDATE releases SET tmdb_id = ? WHERE id = ?", (detail["tmdb_id"], rid))
         wake["downloads"].set()
         row = conn.execute("SELECT * FROM releases WHERE id = ?", (rid,)).fetchone()
         return release_out(conn, row)
@@ -446,6 +450,17 @@ def register(
     def releases_delete(release_id: str, delete_files: bool = Query(False, alias="deleteFiles")):
         stages.delete_release(db(), config_dir, release_id, delete_files)
         return {"ok": True}
+
+    @api.get("/metadata")
+    def metadata_get(
+        kind: Kind,
+        tmdb_id: str | None = Query(None, alias="tmdbId", pattern=r"^\d{1,12}$"),
+        title: str | None = Query(None, max_length=200),
+        year: str | None = Query(None, pattern=r"^\d{4}$"),
+        lang: Literal["en", "fr"] = "en",
+    ):
+        """TMDB details for a title (0.1.1); {"data": null} without a key or a match."""
+        return {"data": metadata.lookup(db(), config_dir, kind, tmdb_id, title, year, lang)}
 
     @api.get("/downloads")
     def downloads_list():

@@ -86,6 +86,12 @@ def release_name(info: dict | None) -> str | None:
     return None
 
 
+def tmdb_id(value: object) -> str | None:
+    """Providers send TMDB ids as numbers or strings, sometimes empty or "0"."""
+    text = str(value or "").strip()
+    return text if text.isdigit() and text != "0" else None
+
+
 def fold(text: str) -> str:
     """Case- and accent-insensitive form used by the catalogue search."""
     text = unicodedata.normalize("NFKD", text.casefold())
@@ -287,6 +293,7 @@ class Xtream(Catalogue):
             "plot": info.get("plot"),
             "cover": info.get("cover") or None,
             "year": str(info.get("releaseDate") or "")[:4],
+            "tmdb_id": tmdb_id(info.get("tmdb") or info.get("tmdb_id")),
             "seasons": seasons,
         }
 
@@ -303,6 +310,7 @@ class Xtream(Catalogue):
             "year": str(info.get("releasedate") or "")[:4],
             "ext": safe_ext(md.get("container_extension")),
             "release": release_name(info),
+            "tmdb_id": tmdb_id(info.get("tmdb_id") or info.get("tmdb")),
         }
 
     def stream_url(self, kind: str, stream_id: str, ext: str) -> str:
@@ -475,6 +483,7 @@ class M3U(Catalogue):
             "plot": None,
             "cover": it["cover"],
             "year": it["year"],
+            "tmdb_id": None,
             "seasons": [{"season": n, "episodes": eps} for n, eps in sorted(seasons.items())],
         }
 
@@ -487,6 +496,7 @@ class M3U(Catalogue):
             "year": it["year"],
             "ext": it["ext"],
             "release": None,
+            "tmdb_id": None,
         }
 
     def stream_url(self, kind: str, stream_id: str, ext: str) -> str:

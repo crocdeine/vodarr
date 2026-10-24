@@ -14,7 +14,7 @@ PACK = "Northwind.Precinct.S01.1080p.WEB-DL-GRP"
 
 @pytest.fixture
 def env(conn, tmp_path, make_season, season_data, monkeypatch):
-    monkeypatch.setattr(stages, "probe_release", lambda p: None)
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
     link_dir = tmp_path / "data" / "links"
     link_dir.mkdir(parents=True)
     core.set_setting(conn, "crossseed", {"linkDirs": [str(link_dir)]})

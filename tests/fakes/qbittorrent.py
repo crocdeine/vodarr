@@ -22,9 +22,11 @@ def _multipart(req) -> dict[str, bytes]:
 
 
 class FakeQbit(FakeServer):
-    def __init__(self, json_add: bool = False):
+    def __init__(self, json_add: bool = False, v5_login: bool = False, bypass: bool = False):
         super().__init__()
         self.json_add = json_add
+        self.v5_login = v5_login  # qBittorrent 5.2: 204 + QBT_SID_<port> cookie
+        self.bypass = bypass  # "bypass authentication for clients in whitelisted subnets"
         self.sids: set[str] = set()
         self.torrents: dict[str, dict] = {}  # hash → {state, progress, savepath, category, name}
         self.added: list[dict] = []
@@ -44,8 +46,8 @@ class FakeQbit(FakeServer):
 
     def guard(self, handler):
         def run(req):
-            sid = re.search(r"SID=([^;]+)", req.headers.get("cookie", ""))
-            if not sid or sid.group(1) not in self.sids:
+            sid = re.search(r"SID(?:_\d+)?=([^;]+)", req.headers.get("cookie", ""))
+            if not self.bypass and (not sid or sid.group(1) not in self.sids):
                 return Response(403, b"Forbidden")
             return handler(req)
 
@@ -53,10 +55,15 @@ class FakeQbit(FakeServer):
 
     def login(self, req):
         form = dict(urllib.parse.parse_qsl(req.body.decode()))
+        if self.bypass:
+            return Response(204, b"")  # whitelisted: no session, any credentials
         if (form.get("username"), form.get("password")) != (USER, PASSWORD):
-            return Response(200, b"Fails.")
+            return Response(401, b"") if self.v5_login else Response(200, b"Fails.")
         sid = secrets.token_hex(8)
         self.sids.add(sid)
+        if self.v5_login:
+            cookie = f"QBT_SID_8080={sid}; HttpOnly; SameSite=Strict; path=/"
+            return Response(204, b"", {"Set-Cookie": cookie})
         return Response(200, b"Ok.", {"Set-Cookie": f"SID={sid}; HttpOnly; path=/"})
 
     def add(self, req):

@@ -16,7 +16,7 @@ Accepté (2026-10-22)
   - `download-worker` : prend le prochain élément `queued` de la file (FIFO), le télécharge, met à jour la progression ;
   - `pipeline-worker` : prend la prochaine release dont une étape est `pending` (et aucune en `error`), exécute cette étape, enregistre le résultat.
 - **SQLite est la seule source de vérité** (ADR-0003) : les workers lisent et écrivent la base ; l'API ne fait que lire l'état et poser des intentions (créer, annuler, relancer, supprimer).
-- Connexions SQLite : une par thread, mode **WAL**, `busy_timeout` 5 s ; écritures courtes dans des transactions.
+- Connexions SQLite : une par thread, journal **`DELETE`** (révisé le 2026-10-23 : le mode WAL, prévu au départ, perdait des écritures et renvoyait « disk I/O error » sur un `/config` monté depuis macOS dans la VM Docker, sa mémoire partagée `-shm` n'y étant pas fiable ; avec un seul utilisateur, l'attente des lecteurs pendant une écriture est négligeable), `busy_timeout` 5 s ; écritures courtes dans des transactions.
 - Réveil : un `threading.Event` par worker, déclenché par l'API (nouvel élément, relance) ; sinon attente de 3 s.
 - Redémarrage : tout élément ou étape `running` repasse en `pending`/`queued` (AC-CORE-05, AC-DL-04).
 - Annulation d'un téléchargement : drapeau en base, lu par le callback de progression qui lève `Cancelled` (mécanisme repris de la démo).
