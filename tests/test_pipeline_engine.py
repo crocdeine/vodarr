@@ -204,3 +204,37 @@ def test_progress_is_stored(conn, tmp_path):
 
     pipeline.process_next(conn, tmp_path / "config", handlers([], analyse=analyse))
     assert seen == [25]
+
+
+def test_reset_while_running_wins_over_the_stale_result(conn, tmp_path):
+    """Bug hunt: episodes added while seed ran were linked but never seeded."""
+    rid = make_release(conn, tmp_path)
+
+    def seed_then_reset(ctx):  # new episodes arrive while this stage runs
+        conn.execute("UPDATE stages SET state = 'pending' WHERE release_id = ?", (rid,))
+        return Msg("seed.done")
+
+    log = []
+    hs = handlers(log, seed=seed_then_reset)
+    while pipeline.process_next(conn, tmp_path / "config", hs) and len(log) < 4:
+        pass
+    pipeline.process_next(conn, tmp_path / "config", hs)  # the seed run, reset meanwhile
+    assert states(conn, rid)["seed"] == "pending"
+
+
+def test_retry_download_of_a_finished_release_completes(conn, tmp_path):
+    """Bug hunt: the download stage stayed pending forever (no file is re-queued)."""
+    rid = make_release(conn, tmp_path)
+    run_all(conn, tmp_path, handlers([]))
+    pipeline.retry(conn, rid, "download")
+    assert states(conn, rid)["download"] == "done"
+    log = []
+    run_all(conn, tmp_path, handlers(log))
+    assert log == ["analyse", "search", "verify", "restore", "seed"]
+
+
+def test_release_without_files_is_not_stuck_downloading(conn, tmp_path):
+    rid = make_release(conn, tmp_path, download_state="running")
+    conn.execute("DELETE FROM files WHERE release_id = ?", (rid,))
+    downloads._update_download_stage(conn, rid)
+    assert states(conn, rid)["download"] == "error"

@@ -165,7 +165,7 @@ export function releasesView(main, releaseId, ctx) {
           f.media && h("small", {}, [videoLine(f.media), audioLine(f.media)].filter(Boolean).join(" — "))),
         h("td", {}, h("small", {}, f.releaseName || t("common.unknown"))),
         h("td", { class: "r num" }, bytes(f.size ?? f.total)),
-        h("td", {}, pill(f.status), f.error && h("small", {}, t(f.error, {}))))))));
+        h("td", {}, pill(f.status), f.error && h("small", {}, t(f.error, f.errorParams || {}))))))));
   }
 
   function scopeLabel(scope) {
@@ -180,7 +180,7 @@ export function releasesView(main, releaseId, ctx) {
       h("div", { class: "card-b stack" },
         h("div", { class: "mono" }, c.infoUrl ? h("a", { href: c.infoUrl, target: "_blank", rel: "noopener noreferrer" }, c.title) : c.title),
         h("div", { class: "inline muted num" }, bytes(c.size), c.seeders !== null && `· ${t("releases.seeders")} ${c.seeders}`),
-        c.problem && h("p", { class: "muted" }, t(c.problem, {}))),
+        c.problem && h("p", { class: "muted" }, t(c.problem, c.problemParams || {}))),
       c.files.length > 0 && h("table", {},
         h("tbody", {}, c.files.map((f) => h("tr", {},
           h("td", {}, h("small", {}, f.path)), h("td", { class: "r num" }, bytes(f.size)), h("td", {}, pill(f.status)))))));

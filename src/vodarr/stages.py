@@ -11,7 +11,6 @@ import sqlite3
 import subprocess
 import time
 from pathlib import Path
-from typing import Any
 
 from vodarr import links, services, torrent
 from vodarr.core import Msg, MsgError, atomic_write, get_setting
@@ -153,8 +152,10 @@ def words(text: str) -> list[str]:
 
 
 # Provider tags before titles: "┃FR┃ Title", "[4K] Title", "NF - Title", "FR | Title".
+# Unbracketed tags are country codes or known labels only: "CSI: Miami", "FBI - Most Wanted".
+TAG = r"(?:[A-Z]{2}|[48]K|TOP|NEW|VIP|VFF|VFQ|VOST|VOSTFR|MULTI|AMZ|DSNP|FHD|UHD)"
 PROVIDER_PREFIX = re.compile(
-    r"^\s*(?:[┃|│\[(]\s*[^┃|│\])]{1,12}?\s*[┃|│\])]\s*|[A-Z0-9+]{2,5}\s*[-–|:•]\s+)+"
+    rf"^\s*(?:[┃|│\[(]\s*[^┃|│\])]{{1,12}}?\s*[┃|│\])]\s*|{TAG}\s*[-–|:•]\s+)+"
 )
 
 
@@ -200,7 +201,8 @@ def classify_result(
     `sizes` maps local episode number (None for a movie) → size; `titles` are the names the
     title may carry (catalogue, original, English), all words of one of them must match."""
     found = set(words(result["title"]))
-    if not any(set(title_words(t)) <= found for t in titles or [release["title"]]):
+    wanted = [set(title_words(t)) for t in titles or [release["title"]]]
+    if not any(w and w <= found for w in wanted):  # an empty set would match everything
         return None
     size = result.get("size") if isinstance(result.get("size"), int) else None
     if release["kind"] == "movie":
@@ -267,6 +269,9 @@ def stage_search(ctx: Ctx) -> Msg:
     release = ctx.release
     sizes = {r["episode"]: r["size"] or 0 for r in release_files(ctx.conn, release)}
     titles, years = search_titles(ctx)
+    titles = [t for t in titles if title_words(t)]
+    if not titles:  # e.g. a Cyrillic title without TMDB: an empty query returns everything
+        raise Skip("search.no_title")
     results, seen = [], set()
     for title in titles:  # catalogue title, then original / English title from TMDB
         for r in client.search(" ".join(title_words(title))):
@@ -277,11 +282,14 @@ def stage_search(ctx: Ctx) -> Msg:
     trackers = set()
     with locked(ctx.conn):
         # References already linked or added to qBittorrent stay: deletion needs them.
-        ctx.conn.execute(
-            "DELETE FROM candidates WHERE release_id = ? AND link_root IS NULL"
-            " AND added_to_qbit = 0",
+        stale = "WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0"
+        for (path,) in ctx.conn.execute(
+            f"SELECT torrent_path FROM candidates {stale} AND torrent_path IS NOT NULL",  # noqa: S608
             (release["id"],),
-        )
+        ).fetchall():  # their .torrent files may carry a passkey: not left behind
+            with contextlib.suppress(MsgError, OSError):
+                _remove_tree(Path(path), [ctx.config_dir / "torrents"])
+        ctx.conn.execute(f"DELETE FROM candidates {stale}", (release["id"],))  # noqa: S608
         known = {
             r[0]
             for r in ctx.conn.execute(
@@ -352,7 +360,8 @@ def stage_verify(ctx: Ctx) -> Msg:
     for row in rows:
         groups.setdefault((row["indexer"], row["scope"]), []).append(row)
     conn.execute(
-        "UPDATE candidates SET status = 'pending', problem_code = NULL, file_report = NULL"
+        "UPDATE candidates SET status = 'pending', problem_code = NULL, problem_params = NULL,"
+        " file_report = NULL"
         " WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0",
         (release["id"],),
     )
@@ -388,12 +397,14 @@ def stage_verify(ctx: Ctx) -> Msg:
     )
 
 
-def _candidate(conn, cid: int, status: str, problem: str | None = None, **fields: Any) -> None:
+def _candidate(
+    conn, cid: int, status: str, problem: str | None = None, params: dict | None = None, **fields
+) -> None:
     sets = ", ".join(f"{k} = ?" for k in fields)
     conn.execute(
-        f"UPDATE candidates SET status = ?, problem_code = ?{', ' + sets if sets else ''}"  # noqa: S608
-        " WHERE id = ?",
-        (status, problem, *fields.values(), cid),
+        "UPDATE candidates SET status = ?, problem_code = ?, problem_params = ?"  # noqa: S608
+        f"{', ' + sets if sets else ''} WHERE id = ?",
+        (status, problem, json.dumps(params) if params else None, *fields.values(), cid),
     )
 
 
@@ -407,7 +418,7 @@ def _verify_candidate(ctx: Ctx, client, row: sqlite3.Row, local: list[Path]) -> 
     except MsgError as e:
         if e.msg.code == "verify.rate_limited":
             raise  # AC-SRCH-05: stop cleanly, no relaunch loop
-        _candidate(ctx.conn, row["id"], "error", e.msg.code)
+        _candidate(ctx.conn, row["id"], "error", e.msg.code, e.msg.params)
         return "error"
     _candidate(
         ctx.conn,
@@ -515,7 +526,7 @@ def qbit_path(conn: sqlite3.Connection, path: Path) -> str:
     return str(path)
 
 
-def stage_seed(ctx: Ctx) -> Msg:
+def stage_seed(ctx: Ctx) -> Msg | None:
     conn = ctx.conn
     client = qbittorrent(conn)
     if client is None:
@@ -548,7 +559,21 @@ def stage_seed(ctx: Ctx) -> Msg:
         )
     deadline = time.monotonic() + SEED_TIMEOUT
     missing = 0
+    stage = "WHERE release_id = ? AND name = 'seed' AND state = 'running'"
+    # From here on we only watch: retry, delete and "complete" may interrupt (ensure_idle).
+    watched = conn.execute(
+        f"UPDATE stages SET msg_code = 'seed.waiting' {stage}",  # noqa: S608
+        (ctx.release["id"],),
+    ).rowcount
     while True:
+        if (
+            watched
+            and not conn.execute(
+                f"SELECT 1 FROM stages {stage}",  # noqa: S608
+                (ctx.release["id"],),
+            ).fetchone()
+        ):
+            return None  # reset or deleted meanwhile: nothing to report
         states = {t.get("hash"): t for t in client.info(list(hashes))}
         missing = missing + 1 if len(states) < len(hashes) else 0
         if missing >= MISSING_POLLS:
@@ -651,9 +676,7 @@ def delete_release(
             for r in conn.execute("SELECT filename FROM files WHERE release_id = ?", (release_id,))
         ]
         # Every path is checked before anything is touched.
-        for ref in refs:
-            if ref["link_root"] and not _inside(Path(ref["link_root"]), link_dirs):
-                raise MsgError("release.unsafe_path")
+        for ref in refs:  # links outside today's link folders are left alone (see below)
             if ref["torrent_path"] and not _inside(Path(ref["torrent_path"]), [torrents_dir]):
                 raise MsgError("release.unsafe_path")
         if delete_files and not all(_inside(folder / n, [folder]) for n in names):
@@ -667,9 +690,19 @@ def delete_release(
             )
         }
         ours -= shared  # still seeded for another release: leave it
+        # Links outside today's link folders (the setting changed, or the record is wrong) are
+        # never deleted: those torrents leave qBittorrent without their files.
+        keep_files = {
+            r["infohash"]
+            for r in refs
+            if r["link_root"] and not _inside(Path(r["link_root"]), link_dirs)
+        }
         client = qbittorrent(conn) if ours else None
         if ours and client is None:
             raise MsgError("release.qbit_unconfigured")
+        if client is not None:  # unreachable: refuse now, before anything is parked or removed
+            client.timeout = 10.0
+            client.info(sorted(ours))
         # Park the pipeline so the worker cannot pick the release up while we clean it.
         conn.execute(
             "UPDATE stages SET state = 'error', msg_code = 'release.deleting'"
@@ -691,18 +724,22 @@ def delete_release(
     _wait_downloads_stopped(running)
     if client is not None:
         # deleteFiles removes only that torrent's files: our links and what qBittorrent completed.
-        client.delete(sorted(ours), delete_files=True)
+        client.delete(sorted(ours - keep_files), delete_files=True)
+        client.delete(sorted(ours & keep_files), delete_files=False)
     for ref in refs:
-        if ref["link_root"]:
+        if ref["link_root"] and _inside(Path(ref["link_root"]), link_dirs):
             _remove_links(ref, link_dirs)
+        elif ref["link_root"]:  # link folder changed since: never delete outside the current ones
+            log.warning("links of release %s left in place: outside the link folders", release_id)
         if ref["torrent_path"]:
             _remove_tree(Path(ref["torrent_path"]), [torrents_dir])
     if delete_files:
         for name in names:
             for target in (folder / name, folder / (name + ".part")):
                 _remove_tree(target, [folder])
-        with contextlib.suppress(OSError):
-            folder.rmdir()
+        for empty in (folder, folder.parent):  # season folder, then the title folder if empty
+            with contextlib.suppress(OSError):
+                empty.rmdir()
     conn.execute("DELETE FROM releases WHERE id = ?", (release_id,))
 
 

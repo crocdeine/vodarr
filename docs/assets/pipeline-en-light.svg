@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 240" width="1280" height="240" role="img" aria-label="Download → Analyse → Search → Verify → Restore → Seed">
+  <rect width="1280" height="240" rx="24" fill="#ffffff"/>
+  <rect x="0.5" y="0.5" width="1279" height="239" rx="24" fill="none" stroke="#ddd4c6"/>
+  <g font-family="system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif">
+    <line x1="110.0" y1="92" x2="1170.0" y2="92" stroke="#a2462a" stroke-width="4" stroke-linecap="round"/>
+    <circle cx="110" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="110" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">1</text>
+    <text x="110" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Download</text>
+    <text x="110" y="200" text-anchor="middle" font-size="19" fill="#4c5866">Xtream · M3U</text>
+    <circle cx="322" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="322" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">2</text>
+    <text x="322" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Analyse</text>
+    <text x="322" y="200" text-anchor="middle" font-size="19" fill="#4c5866">ffprobe</text>
+    <circle cx="534" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="534" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">3</text>
+    <text x="534" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Search</text>
+    <text x="534" y="200" text-anchor="middle" font-size="19" fill="#4c5866">Prowlarr</text>
+    <circle cx="746" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="746" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">4</text>
+    <text x="746" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Verify</text>
+    <text x="746" y="200" text-anchor="middle" font-size="19" fill="#4c5866">every piece</text>
+    <circle cx="958" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="958" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">5</text>
+    <text x="958" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Restore</text>
+    <text x="958" y="200" text-anchor="middle" font-size="19" fill="#4c5866">hardlinks</text>
+    <circle cx="1170" cy="92" r="34" fill="#ffffff" stroke="#a2462a" stroke-width="4"/>
+    <text x="1170" y="103" text-anchor="middle" font-size="30" font-weight="800" fill="#a2462a">6</text>
+    <text x="1170" y="170" text-anchor="middle" font-size="24" font-weight="700" fill="#13202d">Seed</text>
+    <text x="1170" y="200" text-anchor="middle" font-size="19" fill="#4c5866">qBittorrent</text>
+  </g>
+</svg>

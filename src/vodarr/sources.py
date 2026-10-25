@@ -207,6 +207,32 @@ class Catalogue:
         return None
 
 
+def _int(value: Any) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _seasons(episodes: Any) -> dict[int, list[tuple[int, dict]]]:
+    """season → [(episode number, episode)]. Panels send a dict keyed by season, or a list of
+    per-season lists; an episode without a usable id or number is left out, not fatal."""
+    if isinstance(episodes, dict):
+        pairs = [(_int(k), eps) for k, eps in episodes.items()]
+    else:
+        pairs = [(None, eps) for eps in episodes or []]
+    out: dict[int, list[tuple[int, dict]]] = {}
+    for key, eps in pairs:
+        for e in eps if isinstance(eps, list) else []:
+            if not isinstance(e, dict) or e.get("id") is None:
+                continue
+            season = key if key is not None else _int(e.get("season"))
+            num = _int(e.get("episode_num"))
+            if season is not None and num is not None:
+                out.setdefault(season, []).append((num, e))
+    return out
+
+
 class Xtream(Catalogue):
     def __init__(self, source: Source, config_dir: Path):
         super().__init__(source, config_dir)
@@ -271,20 +297,19 @@ class Xtream(Catalogue):
         if not isinstance(data, dict) or not data.get("info"):
             raise MsgError("source.not_found")
         info, seasons = data["info"], []
-        episodes = data.get("episodes") or {}
-        for number, eps in sorted(episodes.items(), key=lambda kv: int(kv[0])):
+        for number, eps in sorted(_seasons(data.get("episodes")).items()):
             seasons.append(
                 {
-                    "season": int(number),
+                    "season": number,
                     "episodes": [
                         {
                             "id": str(e["id"]),
-                            "num": int(e["episode_num"]),
+                            "num": num,
                             "title": str(e.get("title") or ""),
                             "ext": safe_ext(e.get("container_extension")),
                             "release": release_name(e.get("info")),
                         }
-                        for e in sorted(eps, key=lambda e: int(e["episode_num"]))
+                        for num, e in sorted(eps, key=lambda pair: pair[0])
                     ],
                 }
             )
@@ -386,7 +411,7 @@ class M3U(Catalogue):
                 raw = f.read(M3U_LIMIT + 1)
         if len(raw) > M3U_LIMIT:
             raise MsgError("source.playlist_too_large", limitMb=M3U_LIMIT // (1024 * 1024))
-        return raw.decode("utf-8", "replace")
+        return raw.decode("utf-8-sig", "replace")  # some editors start the file with a BOM
 
     def _probe(self) -> None:
         if not self._read().lstrip().startswith("#EXTM3U"):

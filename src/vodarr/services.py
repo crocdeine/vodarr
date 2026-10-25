@@ -105,6 +105,7 @@ class QBittorrent:
     def __init__(self, url: str, username: str, password: str):
         self.url, self.username, self.password = url.rstrip("/"), username, password
         self.cookie: str | None = None  # "name=value", or "" when no session is needed
+        self.timeout = 120.0  # per request; live status reads use a short one
         register_secret(password)
 
     def login(self) -> None:
@@ -115,6 +116,7 @@ class QBittorrent:
             1 << 16,
             {"Content-Type": "application/x-www-form-urlencoded"},
             form.encode(),
+            self.timeout,
         )
         if body.strip() == b"Fails.":
             raise MsgError("seed.auth_failed")
@@ -124,7 +126,7 @@ class QBittorrent:
             register_secret(found.group(2))
             return
         try:  # no session cookie: only fine if qBittorrent does not ask this client to log in
-            _request(f"{self.url}/api/v2/app/version", "seed", 1 << 10)
+            _request(f"{self.url}/api/v2/app/version", "seed", 1 << 10, timeout=self.timeout)
         except MsgError:
             raise MsgError("seed.auth_failed") from None
         self.cookie = ""
@@ -143,7 +145,9 @@ class QBittorrent:
             if content_type:
                 headers["Content-Type"] = content_type
             try:
-                return _request(f"{self.url}/api/v2/{path}", "seed", limit, headers, data)[0]
+                return _request(
+                    f"{self.url}/api/v2/{path}", "seed", limit, headers, data, self.timeout
+                )[0]
             except MsgError as e:
                 if e.msg.code != "seed.auth_failed" or attempt == 2:
                     raise

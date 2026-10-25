@@ -1,5 +1,6 @@
 """Download queue: one global FIFO, one file at a time, resumable via .part files."""
 
+import json
 import logging
 import os
 import re
@@ -33,7 +34,7 @@ def download(
     url: str,
     path: Path,
     tries: int = 5,
-    chunk: int = 1 << 20,
+    chunk: int = 64 << 10,  # small reads: a cancel is noticed quickly even on slow providers
     progress: Callable[[int, int], None] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> int:
@@ -226,10 +227,8 @@ def _update_download_stage(conn: sqlite3.Connection, release_id: str) -> None:
         state, code = "error", "download.some_failed"
     elif "done" in states:
         state, code = "done", None  # cancelled files are left out of the release's work
-    elif "cancelled" in states:
+    else:  # only cancelled files, or none left at all
         state, code = "error", "download.cancelled"
-    else:
-        return
     conn.execute(
         "UPDATE stages SET state = ?, pct = 100, msg_code = ? WHERE release_id = ?"
         " AND name = 'download'",
@@ -270,9 +269,16 @@ def process_next(
             RATES[fid] = (done - last["bytes"]) / (now - last["t"])
         last.update(t=now, bytes=done)
         conn.execute("UPDATE files SET dl_done = ?, dl_total = ? WHERE id = ?", (done, total, fid))
-        status = conn.execute("SELECT dl_status FROM files WHERE id = ?", (fid,)).fetchone()[0]
-        if status == "cancelled":
+        stop_if_cancelled()
+
+    def stop_if_cancelled() -> None:
+        found = conn.execute("SELECT dl_status FROM files WHERE id = ?", (fid,)).fetchone()
+        if found is None or found[0] != "running":  # cancelled, or removed with its release
             raise Cancelled
+
+    def wait(seconds: float) -> None:  # between attempts: a cancel must not wait for data
+        sleep(seconds)
+        stop_if_cancelled()
 
     try:
         source = sources.get(conn, row["source_id"])
@@ -281,7 +287,7 @@ def process_next(
         )
         folder = Path(row["dir"])
         folder.mkdir(parents=True, exist_ok=True)
-        size = download(url, folder / row["filename"], progress=progress, sleep=sleep)
+        size = download(url, folder / row["filename"], progress=progress, sleep=wait)
         conn.execute(
             "UPDATE files SET dl_status = 'done', dl_done = ?, dl_total = ?"
             " WHERE id = ? AND dl_status = 'running'",
@@ -290,7 +296,7 @@ def process_next(
     except Cancelled:
         pass
     except MsgError as e:
-        _fail(conn, fid, e.msg.code)
+        _fail(conn, fid, e.msg.code, e.msg.params)
     except OSError as e:
         log.warning("download of file %d failed: %s", fid, e.strerror)
         _fail(conn, fid, "download.disk_error")
@@ -305,10 +311,11 @@ def process_next(
     return dict(row)
 
 
-def _fail(conn: sqlite3.Connection, fid: int, code: str) -> None:
+def _fail(conn: sqlite3.Connection, fid: int, code: str, params: dict | None = None) -> None:
     conn.execute(
-        "UPDATE files SET dl_status = 'error', dl_error = ? WHERE id = ? AND dl_status = 'running'",
-        (code, fid),
+        "UPDATE files SET dl_status = 'error', dl_error = ?, dl_error_params = ?"
+        " WHERE id = ? AND dl_status = 'running'",
+        (code, json.dumps(params) if params else None, fid),
     )
 
 
@@ -328,8 +335,8 @@ def remove(conn: sqlite3.Connection, file_id: int) -> None:
     ).fetchone()
     if row is None:
         raise MsgError("queue.not_found")
-    if row["dl_status"] not in ("queued", "cancelled", "error"):
-        raise MsgError("queue.not_removable")
+    if row["dl_status"] not in ("queued", "cancelled", "error") or file_id in ACTIVE:
+        raise MsgError("queue.not_removable")  # still being written: wait for the cancel
     (Path(row["dir"]) / (row["filename"] + ".part")).unlink(missing_ok=True)
     conn.execute("DELETE FROM files WHERE id = ?", (file_id,))
     _update_download_stage(conn, row["release_id"])
@@ -343,7 +350,8 @@ def clear_finished(conn: sqlite3.Connection) -> None:
 def queue(conn: sqlite3.Connection) -> list[dict]:
     rows = conn.execute(
         "SELECT f.id, f.release_id, r.title, r.season, f.episode, f.filename, f.dl_status,"
-        " f.dl_done, f.dl_total, f.dl_error FROM files f JOIN releases r ON r.id = f.release_id"
+        " f.dl_done, f.dl_total, f.dl_error, f.dl_error_params"
+        " FROM files f JOIN releases r ON r.id = f.release_id"
         " WHERE f.in_queue = 1 ORDER BY f.queued_at, f.id"
     )
     return [
@@ -358,6 +366,7 @@ def queue(conn: sqlite3.Connection) -> list[dict]:
             "done": r["dl_done"],
             "total": r["dl_total"],
             "error": r["dl_error"],
+            "error_params": json.loads(r["dl_error_params"] or "{}"),
             "rate": RATES.get(r["id"], 0.0),
         }
         for r in rows

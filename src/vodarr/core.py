@@ -73,6 +73,11 @@ MIGRATIONS = [
     ALTER TABLE files ADD COLUMN media_info TEXT;
     ALTER TABLE releases ADD COLUMN tmdb_id TEXT;
     """,
+    # 0.1.2: parameters of error messages (HTTP status, attempts...), as JSON.
+    """
+    ALTER TABLE files ADD COLUMN dl_error_params TEXT;
+    ALTER TABLE candidates ADD COLUMN problem_params TEXT;
+    """,
 ]
 
 

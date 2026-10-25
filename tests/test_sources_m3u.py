@@ -145,3 +145,14 @@ def test_search_all_words_case_and_accent_insensitive():
     assert sources.search(items, "elan vital") == [{"name": "Élan Vital"}]
     assert sources.search(items, "VITAL") == items[:2]
     assert sources.search(items, "") == items
+
+
+def test_playlist_with_a_bom(tmp_path):
+    """Bug hunt: a UTF-8 BOM made a valid playlist "invalid"."""
+    with FakeServer() as srv:
+        body = b"\xef\xbb\xbf" + PLAYLIST.encode()
+        srv.routes[("GET", "/get.php")] = lambda req: Response(200, body)
+        src = sources.Source("m2", "BOM", "m3u", {"url": srv.url + "/get.php"})
+        cat = sources.client(src, tmp_path)
+        cat.test()
+        assert any(i["name"].startswith("Harbour Lights") for i in cat.items("movie"))

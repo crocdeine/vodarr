@@ -193,6 +193,10 @@ def test_year_must_be_a_whole_number(conn, tmp_path, make_season, prowl):
         ("|EN| Heat", "Heat"),
         ("M - A Film", "M - A Film"),  # one-letter title kept
         ("Mission: Impossible", "Mission: Impossible"),  # a real colon is not a tag
+        ("CSI: Miami", "CSI: Miami"),  # bug hunt: real title prefixes were stripped
+        ("NCIS: Los Angeles", "NCIS: Los Angeles"),
+        ("FBI - Most Wanted", "FBI - Most Wanted"),
+        ("VOSTFR - Heat", "Heat"),
     ],
 )
 def test_provider_prefixes_are_removed(raw, clean):
@@ -252,3 +256,34 @@ def test_wrong_provider_tmdb_id_does_not_change_the_year(
         prowl.add("Nimbus", "Harbour.Lights.2023.1080p.WEB-DL-GRP", 50_000)
         run_search(conn, tmp_path, rid)
     assert candidates(conn, rid) == [("Harbour.Lights.2020.FRENCH.1080p.WEB-GRP", "movie", True)]
+
+
+def test_title_without_searchable_words_is_skipped(conn, tmp_path, make_season, prowl):
+    """Bug hunt: a Cyrillic title gave an empty query, and every result matched."""
+    rid, _ = make_season([b"m" * 50_000], kind="movie", title="Война и мир", year="1966")
+    prowl.add("Nimbus", "Unrelated.Film.1966.1080p-GRP", 50_000)
+    with pytest.raises(stages.Skip) as skip:
+        run_search(conn, tmp_path, rid)
+    assert skip.value.msg.code == "search.no_title"
+    assert candidates(conn, rid) == []
+
+
+def test_empty_title_never_matches_a_result():
+    release = {"title": "東京物語", "kind": "movie", "season": None, "year": "1953"}
+    result = {"title": "Totally.Unrelated.1953.1080p", "size": 1000}
+    assert stages.classify_result(result, release, {None: 1000}) is None
+
+
+def test_research_removes_torrents_of_dropped_candidates(conn, tmp_path, make_season, prowl):
+    """Bug hunt: .torrent files (with passkeys) of replaced candidates were left behind."""
+    rid = analysed_season(conn, make_season)
+    old = tmp_path / "config" / "torrents" / f"{rid}-1.torrent"
+    old.parent.mkdir(parents=True, exist_ok=True)
+    old.write_bytes(b"d4:infod...e")
+    conn.execute(
+        "INSERT INTO candidates (release_id, indexer, title, scope, is_candidate, torrent_path)"
+        " VALUES (?, 'Nimbus', 'Old', 'S01', 1, ?)",
+        (rid, str(old)),
+    )
+    run_search(conn, tmp_path, rid)
+    assert not old.exists()

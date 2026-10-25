@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.1.2 — 2026-10-25
+
+### Changed
+- READMEs: a prominent legal disclaimer (no content provided, users responsible for the
+  legality of their IPTV source and downloads, no affiliation, no warranty).
+- READMEs redesigned: banner, screenshots (synthetic data, dark and light), pipeline diagram,
+  feature and compatibility tables, quick start, troubleshooting.
+
+### Fixed
+Found by an exploratory test session against fake services:
+- **Pressing Esc in a confirmation dialog confirmed it** (delete a release or a source,
+  regenerate the API key). Esc now cancels.
+- Provider and TMDB HTTP errors showed "Something went wrong" instead of their message.
+- A title without Latin letters or digits (e.g. Cyrillic) searched Prowlarr with an empty
+  query, and unrelated releases became candidates. Such a title is now skipped (add a TMDB key
+  to search its original or English title).
+- Real title prefixes were taken for provider tags: "CSI: Miami", "FBI - Most Wanted".
+- An unresponsive qBittorrent froze the whole interface: the live seed status now uses a short
+  timeout and pauses after a failure.
+- Episodes added while a stage ran could stay unseeded; "retry from download" on a finished
+  release, or removing its last file, left it downloading forever.
+- A waiting seed stage can now be retried or deleted instead of holding the pipeline for hours.
+- Cancelling a download while the provider is down takes effect at once, and a download still
+  being written can no longer be removed (no stray `.part`).
+- Explorer: picking another title while one was loading could show, and queue, the wrong one.
+- M3U playlists starting with a UTF-8 BOM, and Xtream series with one malformed episode, are
+  read instead of rejected.
+- Releases can be deleted after the link folder setting changed; links outside the current
+  link folders are left untouched.
+- Saving settings or a source through the API: a changed server without its secret is refused;
+  `null` values keep the stored setting; an M3U source can switch from a file to a URL.
+- Deleting a release while qBittorrent is unreachable is refused before anything changes.
+- Error messages keep their details ("HTTP 404", number of attempts).
+- `.torrent` files of replaced candidates and empty title folders are removed.
+- Release page: pipeline stages stay aligned whatever the length of their message, and the
+  retry buttons sit on one line.
+
+### Known limits
+- The releases list shows the 200 most recent releases.
+- Importing a cross-seed `config.js` reads the first `linkDirs` it finds, even in a nested
+  object.
+- The same torrent found on two trackers is seeded from one link folder only.
+
 ## 0.1.1 — 2026-10-25
 
 Fixes found by the first run on a real stack, and two additions.

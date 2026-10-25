@@ -618,8 +618,9 @@ progress.bar::-moz-progress-bar {
 
 .stage {
   position: relative;
-  display: grid;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   gap: var(--s-1);
   text-align: center;
   font-size: var(--fs-xs);
@@ -660,6 +661,10 @@ progress.bar::-moz-progress-bar {
 .stage.s-done::before,
 .stage.s-skipped::before {
   background: var(--ok);
+}
+
+.stage > .btn {
+  margin-top: auto; /* retry buttons on one line, whatever the message length */
 }
 
 .stage b {

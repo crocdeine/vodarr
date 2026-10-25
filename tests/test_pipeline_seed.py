@@ -222,3 +222,49 @@ def test_qbittorrent_5_2_wrong_password(conn, tmp_path, make_season, season_data
     with pytest.raises(MsgError) as err:
         stages.stage_seed(ctx)
     assert err.value.msg.code == "seed.auth_failed"
+
+
+def test_hung_qbittorrent_does_not_hold_live_status(conn, monkeypatch):
+    """Bug hunt: a qBittorrent that accepts and never answers froze every API worker."""
+    import socket
+    import time
+
+    from vodarr import core, routes
+
+    monkeypatch.setattr(routes, "QBIT_LIVE_TIMEOUT", 0.3)
+    monkeypatch.setattr(routes, "_qbit_down_until", 0.0)
+    with socket.socket() as hole:
+        hole.bind(("127.0.0.1", 0))
+        hole.listen(8)  # accepts connections, never reads or answers
+        url = f"http://127.0.0.1:{hole.getsockname()[1]}"
+        core.set_setting(conn, "services", {"qbittorrent": {"url": url, "username": "u"}})
+        start = time.monotonic()
+        assert routes.qbit_states(conn, ["a" * 40]) == {}
+        assert time.monotonic() - start < 2
+        start = time.monotonic()
+        assert routes.qbit_states(conn, ["a" * 40]) == {}  # backing off: no new call
+        assert time.monotonic() - start < 0.1
+
+
+def test_waiting_seed_can_be_interrupted(
+    conn, tmp_path, make_season, season_data, stack, monkeypatch
+):
+    """Bug hunt: a seed waiting on qBittorrent held the worker for hours, delete was refused."""
+    prowl, qbit, _ = stack
+    ctx, _ = restored(conn, tmp_path, make_season, season_data, prowl)
+    rid = ctx.release["id"]
+    conn.execute("UPDATE stages SET state = 'done' WHERE release_id = ? AND name != 'seed'", (rid,))
+    qbit.next_states = ["checkingUP"] * 1000
+    calls = []
+
+    def user_retries(seconds):  # the API thread acts while the worker waits
+        calls.append(seconds)
+        pipeline.retry(conn, rid, "seed")  # not refused as busy
+
+    monkeypatch.setattr(stages.time, "sleep", user_retries)
+    pipeline.process_next(conn, tmp_path / "config", pipeline.handlers())
+    assert len(calls) == 1
+    row = conn.execute(
+        "SELECT state, msg_code FROM stages WHERE release_id = ? AND name = 'seed'", (rid,)
+    ).fetchone()
+    assert (row["state"], row["msg_code"]) == ("pending", None)

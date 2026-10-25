@@ -90,6 +90,8 @@ def test_masked_secret_refused_when_server_changes(client):
     )
     r = put(client, {"services": {"prowlarr": {"url": "http://attacker:9696", "apiKey": "••••"}}})
     assert r.status_code == 422
+    omitted = put(client, {"services": {"prowlarr": {"url": "http://attacker:9696"}}})
+    assert omitted.status_code == 422  # bug hunt: an omitted key followed the new URL
     assert r.json()["error"] == {
         "code": "settings.secret_required",
         "params": {"service": "prowlarr"},
@@ -274,3 +276,25 @@ def test_missing_folders_are_created_under_an_existing_top_folder(client, tmp_pa
 def test_folders_are_not_created_outside_an_existing_top_folder(client, path):
     r = put(client, {"paths": {"downloads": path}})
     assert r.json()["error"]["code"] == "settings.path_missing"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"paths": None},
+        {"services": None},
+        {"services": {"prowlarr": None}},
+        {"crossseed": {"linkDirs": None, "flatLinking": None}},
+    ],
+)
+def test_null_means_keep_never_a_500(client, body):
+    """Bug hunt: nulls crashed the save (500) or were stored as None."""
+    before = client.get("/api/settings").json()
+    r = put(client, body)
+    assert r.status_code == 200, r.text
+    assert r.json() == before
+
+
+def test_nul_byte_in_a_path_is_refused(client):
+    r = put(client, {"paths": {"downloads": "/data/a\x00b"}})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "settings.path_missing"

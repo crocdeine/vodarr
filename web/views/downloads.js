@@ -47,7 +47,7 @@ export function downloadsDrawer() {
       h("div", { class: "inline muted num" },
         d.total ? `${bytes(d.done)} / ${bytes(d.total)}` : bytes(d.done),
         running && d.rate > 0 && `· ${t("downloads.rate", { rate: bytes(d.rate) })}`,
-        d.error && `· ${t(d.error, {})}`,
+        d.error && `· ${t(d.error, d.errorParams || {})}`,
         h("span", { class: "grow" }),
         ["queued", "running"].includes(d.status) && button(t("downloads.cancel"), () => act(() => api.post(`/downloads/${d.id}/cancel`)), { small: true }),
         ["queued", "cancelled", "error"].includes(d.status) && button(t("downloads.remove"), () => act(() => api.del(`/downloads/${d.id}`)), { small: true, kind: "ghost" })));

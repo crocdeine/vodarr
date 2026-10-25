@@ -98,6 +98,8 @@ def test_source_secret_does_not_follow_a_new_server(env):
         headers=H,
     )
     assert r.status_code == 422 and r.json()["error"]["code"] == "settings.secret_required"
+    r = c.patch(f"/api/sources/{a['id']}", json={"server": "http://attacker:80"}, headers=H)
+    assert r.status_code == 422  # omitted password: same rule
     assert (
         c.patch(
             f"/api/sources/{a['id']}", json={"name": "Renamed", "password": "••••"}, headers=H
@@ -280,3 +282,20 @@ def test_release_detail_carries_technical_metadata(env):
     )
     f = c.get(f"/api/releases/{rid}").json()["fileList"][0]
     assert f["media"]["video"] == {"codec": "hevc", "height": 1080}
+
+
+def test_m3u_source_switches_from_file_to_url(env):
+    """Bug hunt: the form resends the old path with the new URL; the URL must win."""
+    c, *_ = env
+    r = c.post("/api/sources", json={"name": "M", "type": "m3u", "path": "list.m3u"}, headers=H)
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    r = c.patch(
+        f"/api/sources/{sid}",
+        json={"path": "list.m3u", "url": "http://iptv.invalid/get.php"},
+        headers=H,
+    )
+    assert r.status_code == 200, r.text
+    conn = open_db(env[4] / "config")
+    cfg = json.loads(conn.execute("SELECT config FROM sources WHERE id = ?", (sid,)).fetchone()[0])
+    assert cfg == {"url": "http://iptv.invalid/get.php"}

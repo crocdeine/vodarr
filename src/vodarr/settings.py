@@ -58,7 +58,7 @@ def _check_dir(path: str, code_prefix: str = "settings") -> Path:
     an existing top-level folder (e.g. /data): a typo or an unmounted volume is reported, not
     silently created inside the container."""
     p = Path(path)
-    if not p.is_absolute() or ".." in p.parts:
+    if "\x00" in path or not p.is_absolute() or ".." in p.parts:
         raise MsgError(f"{code_prefix}.path_missing", path=path)
     if not p.is_dir():
         top = Path(p.anchor, *p.parts[1:2])
@@ -111,7 +111,8 @@ def save(conn: sqlite3.Connection, body: dict[str, Any]) -> dict[str, Any]:
             new[section].update(values)
     for section, name, field, server in SECRETS:
         entry, previous = new[section][name], old[section][name]
-        if entry[field] == MASK:
+        sent = (body.get(section) or {}).get(name) or {}
+        if entry[field] == MASK or (field not in sent and previous[field]):  # masked or omitted
             if server and entry[server] != previous[server]:
                 raise MsgError("settings.secret_required", service=name)
             entry[field] = previous[field]

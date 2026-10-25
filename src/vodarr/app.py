@@ -69,11 +69,12 @@ class CamelJSON(JSONResponse):
         return json.dumps(_camel(content), ensure_ascii=False, separators=(",", ":")).encode()
 
 
-def error(status: int, code: str, headers: dict | None = None, **params: Any) -> CamelJSON:
-    """The single error shape (ADR-0004); security headers included, even before routing."""
+def error(http_status: int, code: str, headers: dict | None = None, /, **params: Any) -> CamelJSON:
+    """The single error shape (ADR-0004); security headers included, even before routing.
+    Positional-only: message params may be named `status`, `code` or `headers`."""
     return CamelJSON(
         {"error": {"code": code, "params": params}},
-        status_code=status,
+        status_code=http_status,
         headers={**SECURITY_HEADERS, **(headers or {})},
     )
 
@@ -331,7 +332,7 @@ def create_app(
         code = {404: "http.not_found", 405: "http.method_not_allowed"}.get(
             exc.status_code, "http.error"
         )
-        return error(exc.status_code, code, headers=getattr(exc, "headers", None))
+        return error(exc.status_code, code, getattr(exc, "headers", None))
 
     @app.exception_handler(MsgError)
     async def on_msg_error(request: Request, exc: MsgError):
@@ -429,7 +430,9 @@ def create_app(
     @api.put("/settings")
     def settings_put(body: SettingsIn):
         # Stored keys are the camelCase names the frontend and pipeline share.
-        return settings.save(db(), body.model_dump(by_alias=True, exclude_unset=True))
+        return settings.save(  # null means "keep", like an omitted field
+            db(), body.model_dump(by_alias=True, exclude_unset=True, exclude_none=True)
+        )
 
     @api.post("/settings/test")
     def settings_test(body: ServiceTest):

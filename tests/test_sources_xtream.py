@@ -189,8 +189,6 @@ def test_test_connection(xtream):
 @pytest.mark.parametrize(
     "payload",
     [
-        {"info": {"name": "x"}, "episodes": {"one": [{}]}},
-        {"info": {"name": "x"}, "episodes": {"1": [{"id": 1}]}},
         {"info": "not a dict", "episodes": []},
     ],
 )
@@ -261,3 +259,23 @@ def test_redirect_to_other_scheme_is_refused(tmp_path, target):
             sources.client(src, tmp_path).items("series")
     assert err.value.msg.code in ("source.unreachable", "source.http_error")
     assert len(srv.requests) == 1
+
+
+def test_bad_episodes_are_left_out_not_fatal(xtream):
+    """Bug hunt: one episode without a number made the whole series unreadable."""
+    srv, x = xtream
+    eps = srv.series_info["100"]["episodes"]["1"]
+    eps.append({**eps[0], "id": 1999, "episode_num": None})
+    eps.append({**eps[0], "id": 1998, "episode_num": ""})
+    assert [e["num"] for e in x.series("100")["seasons"][0]["episodes"]] == [1, 2, 3]
+    srv.series_info["666"] = {"info": {"name": "x"}, "episodes": {"one": [{}], "1": [{"id": 1}]}}
+    assert x.series("666")["seasons"] == []
+
+
+def test_episodes_as_a_list_of_seasons(xtream):
+    srv, x = xtream
+    info = srv.series_info["100"]
+    info["episodes"] = [
+        [{**e, "season": int(n)} for e in eps] for n, eps in info["episodes"].items()
+    ]
+    assert [s["season"] for s in x.series("100")["seasons"]] == [1, 2]

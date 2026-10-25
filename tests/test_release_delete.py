@@ -73,24 +73,27 @@ def test_preexisting_torrent_is_never_removed(conn, tmp_path, seeded):
 
 
 def test_link_root_outside_link_dirs_is_not_deleted(conn, tmp_path, seeded):
-    rid, _, _, _ = seeded
+    """Bug hunt: changing the link folder made old releases impossible to delete. They are
+    deleted now, but nothing outside today's link folders is touched, by us or qBittorrent."""
+    rid, _, _, qbit = seeded
     victim = tmp_path / "precious"
     victim.mkdir()
+    (victim / "keep.mkv").write_bytes(b"k")
     conn.execute("UPDATE candidates SET link_root = ?", (str(victim),))
-    with pytest.raises(MsgError) as err:
-        stages.delete_release(conn, tmp_path / "config", rid)
-    assert err.value.msg.code == "release.unsafe_path"
-    assert victim.exists()
-    assert conn.execute("SELECT count(*) FROM releases").fetchone()[0] == 1  # nothing half-done
-    assert pipeline.status(conn, rid) == "done"
+    stages.delete_release(conn, tmp_path / "config", rid)
+    assert (victim / "keep.mkv").exists()
+    assert qbit.deleted and all(not files for _, files in qbit.deleted)
+    assert conn.execute("SELECT count(*) FROM releases").fetchone()[0] == 0
 
 
-def test_dotdot_in_link_root_is_refused(conn, tmp_path, seeded):
+def test_dotdot_in_link_root_is_not_followed(conn, tmp_path, seeded):
     rid, _, link_dir, qbit = seeded
+    elsewhere = tmp_path / "data" / "elsewhere"
+    elsewhere.mkdir(parents=True, exist_ok=True)
     conn.execute("UPDATE candidates SET link_root = ?", (str(link_dir / ".." / "elsewhere"),))
-    with pytest.raises(MsgError):
-        stages.delete_release(conn, tmp_path / "config", rid)
-    assert qbit.deleted == []
+    stages.delete_release(conn, tmp_path / "config", rid)
+    assert elsewhere.exists()
+    assert all(not files for _, files in qbit.deleted)
 
 
 def test_qbit_unconfigured_refuses_delete(conn, tmp_path, seeded):
@@ -144,3 +147,17 @@ def test_preexisting_folder_content_survives(conn, tmp_path, seeded):
     stages.delete_release(conn, tmp_path / "config", rid)
     assert keep.read_bytes() == b"keep me"
     assert sorted(p.name for p in root.iterdir()) == ["someone-elses-file.mkv"]
+
+
+def test_unreachable_qbittorrent_leaves_the_release_intact(conn, tmp_path, seeded):
+    """Bug hunt: a failed delete left every stage in "being deleted"."""
+    rid, _, _, _ = seeded
+    from vodarr import core
+
+    services = core.get_setting(conn, "services")
+    services["qbittorrent"]["url"] = "http://127.0.0.1:9"  # nothing listens there
+    core.set_setting(conn, "services", services)
+    with pytest.raises(MsgError) as err:
+        stages.delete_release(conn, tmp_path / "config", rid)
+    assert err.value.msg.code == "seed.unreachable"
+    assert pipeline.status(conn, rid) == "done"

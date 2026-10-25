@@ -133,6 +133,8 @@ def test_error_is_recorded_with_code(env):
     work(env)
     row = conn.execute("SELECT dl_status, dl_error FROM files").fetchone()
     assert (row["dl_status"], row["dl_error"]) == ("error", "download.http_error")
+    [item] = downloads.queue(conn)
+    assert item["error_params"] == {"status": 404}  # bug hunt: shown as "HTTP —" before
     stage = conn.execute(
         "SELECT state, msg_code FROM stages WHERE release_id = ? AND name = 'download'", (rid,)
     ).fetchone()
@@ -386,3 +388,32 @@ def test_non_integer_selection_rejected(env):
             [{"id": "1", "num": "2", "title": "t", "ext": "mkv"}],
             dl,
         )
+
+
+def test_cancel_during_retry_backoff_stops_at_once(env, monkeypatch):
+    """Bug hunt: with the provider down, a cancel was only seen once data flowed again."""
+    _, conn, cfg, _, _ = env
+    rid = enqueue_season(env, EPISODES[:1])
+    calls = []
+
+    def down(*args, **kwargs):
+        calls.append(1)
+        raise ConnectionResetError
+
+    monkeypatch.setattr(downloads, "open_url", down)
+
+    def cancel_while_waiting(seconds):
+        fid = conn.execute("SELECT id FROM files WHERE release_id = ?", (rid,)).fetchone()[0]
+        downloads.cancel(conn, fid)
+
+    downloads.process_next(conn, cfg, sleep=cancel_while_waiting)
+    assert len(calls) == 1
+    row = conn.execute("SELECT id, dl_status FROM files WHERE release_id = ?", (rid,)).fetchone()
+    assert row["dl_status"] == "cancelled"
+    downloads.ACTIVE.add(row["id"])  # as if the worker were still writing it
+    try:
+        with pytest.raises(MsgError):
+            downloads.remove(conn, row["id"])
+    finally:
+        downloads.ACTIVE.discard(row["id"])
+    downloads.remove(conn, row["id"])

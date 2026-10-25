@@ -13,9 +13,9 @@ export function progress(done, total) {
   return h("progress", { class: "bar", max: String(total || 1), value: String(Math.min(done || 0, total || 1)) });
 }
 
-export function button(label, onclick, { kind = "", iconName, small, disabled, type = "button" } = {}) {
+export function button(label, onclick, { kind = "", iconName, small, disabled, type = "button", value } = {}) {
   const cls = ["btn", kind, small ? "small" : ""].filter(Boolean).join(" ");
-  return h("button", { class: cls, type, onclick, disabled }, iconName && icon(iconName), label);
+  return h("button", { class: cls, type, onclick, disabled, value }, iconName && icon(iconName), label);
 }
 
 export function field(label, input, hint) {
@@ -101,13 +101,14 @@ export function confirmDialog(title, text, { confirm, danger, extra } = {}) {
     const form = h("form", { method: "dialog", class: "stack" }, h("h3", { class: "heading" }, title), text && h("p", { class: "muted" }, text), extra,
       h("div", { class: "inline" },
         button(t("common.cancel"), () => dialog.close("cancel")),
-        button(confirm || t("common.ok"), null, { kind: danger ? "danger" : "primary", type: "submit" })));
+        button(confirm || t("common.ok"), null, { kind: danger ? "danger" : "primary", type: "submit", value: "ok" })));
     const dialog = h("dialog", {}, form);
     dialog.addEventListener("close", () => {
       const values = Object.fromEntries(new FormData(form));
       for (const box of form.querySelectorAll("input[type=checkbox]")) values[box.name] = box.checked;
       dialog.remove();
-      resolve(dialog.returnValue === "cancel" ? null : values);
+      // Only the confirm button says "ok": Esc and Cancel close with anything else.
+      resolve(dialog.returnValue === "ok" ? values : null);
     });
     document.body.append(dialog);
     dialog.showModal();

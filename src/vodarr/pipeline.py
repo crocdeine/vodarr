@@ -9,6 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from vodarr import downloads
 from vodarr.core import Msg, MsgError
 
 log = logging.getLogger(__name__)
@@ -30,13 +31,21 @@ class Ctx:
 
 
 Handler = Callable[[Ctx], Msg | None]
+SET = (
+    "UPDATE stages SET state = ?, msg_code = ?, msg_params = ?, pct = coalesce(?, pct)"
+    " WHERE release_id = ? AND name = ?"
+)
+SET_RAN = SET + " AND state = 'running'"
 
 
-def _set(conn, release_id, name, state, msg: Msg | None = None, pct: int | None = None) -> None:
+def _set(
+    conn, release_id, name, state, msg: Msg | None = None, pct: int | None = None, *, ran=False
+) -> None:
+    """`ran`: the end of a run, written only if the stage is still running (new episodes,
+    a retry or a delete may have reset it meanwhile: the reset wins)."""
+    sql = SET_RAN if ran else SET
     conn.execute(
-        "UPDATE stages SET state = ?, msg_code = ?, msg_params = ?, pct = coalesce(?, pct)"
-        " WHERE release_id = ? AND name = ?",
-        (state, msg and msg.code, msg and json.dumps(msg.params), pct, release_id, name),
+        sql, (state, msg and msg.code, msg and json.dumps(msg.params), pct, release_id, name)
     )
 
 
@@ -72,20 +81,21 @@ def process_next(
     def progress(done: float, total: float) -> None:
         pct = int(100 * done / total) if total else 0
         conn.execute(
-            "UPDATE stages SET pct = ? WHERE release_id = ? AND name = ?", (pct, rid, name)
+            "UPDATE stages SET pct = ? WHERE release_id = ? AND name = ? AND state = 'running'",
+            (pct, rid, name),
         )
 
     try:
         msg = handlers[name](Ctx(conn, config_dir, release, progress))
-        _set(conn, rid, name, "done", msg, pct=100)
+        _set(conn, rid, name, "done", msg, pct=100, ran=True)
     except Skip as e:
-        _set(conn, rid, name, "skipped", e.msg, pct=100)
+        _set(conn, rid, name, "skipped", e.msg, pct=100, ran=True)
     except MsgError as e:
-        _set(conn, rid, name, "error", e.msg)
+        _set(conn, rid, name, "error", e.msg, ran=True)
     except Exception:
         # Details stay in the (redacted) log: exception text may carry URLs with credentials.
         log.exception("stage %s of release %s failed", name, rid)
-        _set(conn, rid, name, "error", Msg("pipeline.internal_error"))
+        _set(conn, rid, name, "error", Msg("pipeline.internal_error"), ran=True)
     return rid
 
 
@@ -113,7 +123,8 @@ def ensure_idle(conn: sqlite3.Connection, release_id: str) -> None:
     if not conn.execute("SELECT 1 FROM releases WHERE id = ?", (release_id,)).fetchone():
         raise MsgError("release.not_found")
     running = conn.execute(
-        "SELECT 1 FROM stages WHERE release_id = ? AND state = 'running' AND name != 'download'",
+        "SELECT 1 FROM stages WHERE release_id = ? AND state = 'running' AND name != 'download'"
+        " AND coalesce(msg_code, '') != 'seed.waiting'",  # only watching qBittorrent: interruptible
         (release_id,),
     ).fetchone()
     if running:
@@ -142,6 +153,9 @@ def _reset(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
             " WHERE release_id = ? AND dl_status IN ('error', 'cancelled')",
             (release_id,),
         )
+        # Done files are never downloaded again (they may be linked and seeding): with nothing
+        # re-queued, the download stage is complete at once instead of waiting forever.
+        downloads._update_download_stage(conn, release_id)
 
 
 def status(conn: sqlite3.Connection, release_id: str) -> str:

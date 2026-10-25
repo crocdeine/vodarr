@@ -6,6 +6,7 @@ import logging
 import math
 import sqlite3
 import threading
+import time
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
@@ -35,13 +36,13 @@ class SourceIn(ApiModel):
 
 class SourcePatch(ApiModel):
     name: str | None = Field(None, min_length=1, max_length=100)
-    server: str | None = None
-    user: str | None = None
-    password: str | None = None
-    url: str | None = None
-    path: str | None = None
+    server: str | None = Field(None, max_length=4096)
+    user: str | None = Field(None, max_length=4096)
+    password: str | None = Field(None, max_length=4096)
+    url: str | None = Field(None, max_length=4096)
+    path: str | None = Field(None, max_length=4096)
     split_prefix: bool | None = None
-    position: int | None = None
+    position: int | None = Field(None, ge=0, le=1_000_000)
 
 
 class ReleaseIn(ApiModel):
@@ -141,6 +142,7 @@ def candidate_out(row: sqlite3.Row) -> dict:
         "seeders": row["seeders"],
         "status": row["status"],
         "problem": row["problem_code"],
+        "problem_params": json.loads(row["problem_params"] or "{}"),
         "complete_requested": bool(row["complete_requested"]),
         "linked": bool(row["link_root"]),
         "in_qbittorrent": bool(row["added_to_qbit"]),
@@ -184,6 +186,7 @@ def release_detail(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
                 "done": f["dl_done"],
                 "total": f["dl_total"],
                 "error": f["dl_error"],
+                "error_params": json.loads(f["dl_error_params"] or "{}"),
                 "media": json.loads(f["media_info"]) if f["media_info"] else None,
             }
             for f in file_rows
@@ -192,11 +195,20 @@ def release_detail(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
     }
 
 
+QBIT_LIVE_TIMEOUT = 3.0
+QBIT_BACKOFF = 15.0
+_qbit_down_until = 0.0
+
+
 def qbit_states(conn: sqlite3.Connection, hashes: list[str]) -> dict:
-    """Live qBittorrent state per infohash (AC-SEED-05); empty if unreachable."""
+    """Live qBittorrent state per infohash (AC-SEED-05); empty if unreachable. The UI polls
+    this every few seconds: a short timeout, then a pause after a failure, so a hung
+    qBittorrent cannot hold every API worker."""
+    global _qbit_down_until
     client = stages.qbittorrent(conn) if hashes else None
-    if client is None:
+    if client is None or time.monotonic() < _qbit_down_until:
         return {}
+    client.timeout = QBIT_LIVE_TIMEOUT
     try:
         return {
             t["hash"]: {
@@ -208,6 +220,7 @@ def qbit_states(conn: sqlite3.Connection, hashes: list[str]) -> dict:
             for t in client.info(hashes)
         }
     except MsgError:
+        _qbit_down_until = time.monotonic() + QBIT_BACKOFF
         return {}
 
 
@@ -270,17 +283,17 @@ def register(
                 k: changes[k] for k in ("server", "user", "password", "url", "path") if k in changes
             },
         }
-        # A masked secret is kept only while its server stays the same (AC-SET-03).
-        if new.get("password") == MASK:
+        # A masked or omitted secret is kept only while its server stays the same (AC-SET-03).
+        if row["type"] == "xtream" and changes.get("password") in (None, MASK):
             if new.get("server") != old.get("server"):
                 raise MsgError("settings.secret_required", service="source")
             new["password"] = old.get("password")
         if new.get("url") == MASK:
             new["url"] = old.get("url")
-        if "url" in changes and changes["url"] != MASK:
-            new.pop("path", None)
-        if "path" in changes:
+        if changes.get("path") not in (None, old.get("path")):  # the form resends the old path
             new.pop("url", None)
+        elif "url" in changes and changes["url"] != MASK:
+            new.pop("path", None)
         new = check_config(row["type"], new)
         register_secret(new.get("password") or new.get("url"))
         conn.execute(

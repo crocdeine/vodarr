@@ -157,3 +157,14 @@ def test_interface_is_served_with_security_headers(client):
 def test_dotfiles_are_never_served(client):
     assert client.get("/.DS_Store").status_code == 404
     assert client.get("/styles/.hidden").status_code == 404
+
+
+def test_message_params_named_like_error_arguments_are_kept():
+    """A provider's HTTP status travels as the `status` param (source.http_error)."""
+    import json
+
+    from vodarr.app import error
+
+    r = error(502, "source.http_error", None, status=503, code="x", headers="y")
+    assert r.status_code == 502
+    assert json.loads(r.body)["error"]["params"] == {"status": 503, "code": "x", "headers": "y"}

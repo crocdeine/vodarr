@@ -101,10 +101,12 @@ export function explorerView(main, sourceId, ctx) {
     try {
       const path = state.kind === "series" ? "series" : "movies";
       const detail = await api.get(`/sources/${state.source.id}/${path}/${encodeURIComponent(item.id)}`);
+      if (state.item !== item) return; // another title was picked meanwhile: its answer wins
       replace(detailPane, state.kind === "series" ? seriesDetail(item, detail) : movieDetail(item, detail));
       const meta = await fetchMeta(state.kind, { tmdbId: detail.tmdbId, title: detail.name || item.name, year: detail.year || item.year });
       if (meta && state.item === item) detailPane.querySelector(".content")?.prepend(metaPanel(meta));
     } catch (error) {
+      if (state.item !== item) return;
       replace(detailPane, h("div", { class: "content" }, emptyState(t(error.code, error.params))));
     }
   }
@@ -115,9 +117,9 @@ export function explorerView(main, sourceId, ctx) {
       detail.plot && h("p", { class: "muted" }, detail.plot));
   }
 
-  async function queue(body) {
+  async function queue(item, body) {
     try {
-      await api.post("/releases", { sourceId: state.source.id, itemId: state.item.id, ...body });
+      await api.post("/releases", { sourceId: state.source.id, itemId: item.id, ...body });
       toast(t("explorer.queued"));
       ctx.drawer?.refresh();
     } catch (error) {
@@ -128,7 +130,7 @@ export function explorerView(main, sourceId, ctx) {
   function seriesDetail(item, detail) {
     return h("div", {}, header(item, detail), h("div", { class: "content" }, detail.seasons.map((season) => {
       const boxes = [];
-      const selectionButton = button("", () => queue({ kind: "series", season: season.season, episodes: boxes.filter((b) => b.checked).map((b) => b.value) }), { disabled: true });
+      const selectionButton = button("", () => queue(item, { kind: "series", season: season.season, episodes: boxes.filter((b) => b.checked).map((b) => b.value) }), { disabled: true });
       const update = () => {
         const n = boxes.filter((b) => b.checked).length;
         selectionButton.disabled = n === 0;
@@ -138,7 +140,7 @@ export function explorerView(main, sourceId, ctx) {
       return card(t("explorer.season", { season: season.season }),
         h("div", { class: "card-b inline" }, h("span", { class: "muted" }, t("explorer.episodes", { count: season.episodes.length })),
           h("span", { class: "grow" }),
-          button(t("explorer.download_season"), () => queue({ kind: "series", season: season.season }), { kind: "primary", iconName: "down", small: true }),
+          button(t("explorer.download_season"), () => queue(item, { kind: "series", season: season.season }), { kind: "primary", iconName: "down", small: true }),
           selectionButton),
         season.episodes.map((ep) => {
           const box = h("input", { type: "checkbox", value: ep.id, onchange: update, "aria-label": ep.title });
@@ -152,7 +154,7 @@ export function explorerView(main, sourceId, ctx) {
   function movieDetail(item, detail) {
     return h("div", {}, header(item, detail), h("div", { class: "content" },
       card(t("explorer.release"), h("div", { class: "card-b stack" }, h("p", { class: "mono" }, detail.release || t("common.unknown")),
-        h("div", {}, button(t("explorer.download_movie"), () => queue({ kind: "movie" }), { kind: "primary", iconName: "down" }))))));
+        h("div", {}, button(t("explorer.download_movie"), () => queue(item, { kind: "movie" }), { kind: "primary", iconName: "down" }))))));
   }
 
   drawKind();
