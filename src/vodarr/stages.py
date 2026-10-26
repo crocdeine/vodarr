@@ -262,6 +262,10 @@ def prowlarr(conn: sqlite3.Connection) -> services.Prowlarr | None:
     return services.Prowlarr(cfg["url"], cfg["apiKey"])
 
 
+def _same_torrent(indexer, title, size) -> tuple:
+    return ("same", str(indexer or ""), str(title or ""), size)
+
+
 def stage_search(ctx: Ctx) -> Msg:
     client = prowlarr(ctx.conn)
     if client is None:
@@ -275,8 +279,13 @@ def stage_search(ctx: Ctx) -> Msg:
     results, seen = [], set()
     for title in titles:  # catalogue title, then original / English title from TMDB
         for r in client.search(" ".join(title_words(title))):
-            if r["downloadUrl"] not in seen:
-                seen.add(r["downloadUrl"])
+            # Prowlarr may return one torrent twice under two URLs: same tracker, name, size.
+            keys = {
+                r["downloadUrl"],
+                _same_torrent(r.get("indexer"), r.get("title"), r.get("size")),
+            }
+            if not keys & seen:
+                seen |= keys
                 results.append(r)
     kept = 0
     trackers = set()
@@ -290,15 +299,16 @@ def stage_search(ctx: Ctx) -> Msg:
             with contextlib.suppress(MsgError, OSError):
                 _remove_tree(Path(path), [ctx.config_dir / "torrents"])
         ctx.conn.execute(f"DELETE FROM candidates {stale}", (release["id"],))  # noqa: S608
-        known = {
-            r[0]
-            for r in ctx.conn.execute(
-                "SELECT download_url FROM candidates WHERE release_id = ?", (release["id"],)
-            )
-        }
+        known = set()
+        for c in ctx.conn.execute(
+            "SELECT download_url, indexer, title, size FROM candidates WHERE release_id = ?",
+            (release["id"],),
+        ):
+            known |= {c[0], _same_torrent(c[1], c[2], c[3])}
         for r in results:
             found = classify_result(r, release, sizes, titles, years)
-            if not found or r["downloadUrl"] in known:
+            same = _same_torrent(r.get("indexer"), r.get("title"), r.get("size"))
+            if not found or r["downloadUrl"] in known or same in known:
                 continue
             scope, is_candidate = found
             _insert_candidate(ctx.conn, release["id"], r, scope, is_candidate)
@@ -484,7 +494,15 @@ def stage_restore(ctx: Ctx) -> Msg:
     folder = Path(release["dir"])
     link_dir = links.pick_link_dir([Path(d) for d in cfg["linkDirs"]], folder, cfg["linkType"])
     linked = 0
+    roots: dict[str, str] = {}  # infohash → link folder already made
     for i, ref in enumerate(refs, start=1):
+        if ref["infohash"] in roots:  # same torrent cross-posted: qBittorrent seeds it once
+            conn.execute(
+                "UPDATE candidates SET link_root = ? WHERE id = ?",
+                (roots[ref["infohash"]], ref["id"]),
+            )
+            ctx.progress(i, len(refs))
+            continue
         t = torrent.load_torrent(Path(ref["torrent_path"]).read_bytes())
         report = json.loads(ref["file_report"])
         result = links.restore(
@@ -493,6 +511,7 @@ def stage_restore(ctx: Ctx) -> Msg:
         conn.execute(
             "UPDATE candidates SET link_root = ? WHERE id = ?", (str(result.root), ref["id"])
         )
+        roots[ref["infohash"]] = str(result.root)
         linked += result.linked + result.reused
         ctx.progress(i, len(refs))
     return Msg("restore.done", references=len(refs), files=linked)

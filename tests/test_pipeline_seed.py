@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from tests.fakes.prowlarr import API_KEY, FakeProwlarr
@@ -163,12 +165,19 @@ def test_same_infohash_on_two_trackers_added_once(conn, tmp_path, make_season, s
     ctx, _ = restored(
         conn, tmp_path, make_season, season_data, prowl, trackers=("Nimbus", "Aurora")
     )
+    roots = {
+        r[0] for r in conn.execute("SELECT link_root FROM candidates WHERE link_root IS NOT NULL")
+    }
+    assert len(roots) == 1  # 0.2: one link tree, the one qBittorrent seeds
     msg = stages.stage_seed(ctx)
     assert len(qbit.added) == 1
+    assert qbit.added[0]["savepath"].endswith(Path(next(iter(roots))).parent.name)
     assert msg.params == {"trackers": "Aurora, Nimbus"}
     assert (
         conn.execute("SELECT count(*) FROM candidates WHERE added_to_qbit = 1").fetchone()[0] == 2
     )
+    stages.delete_release(conn, tmp_path / "config", ctx.release["id"])  # shared tree: no error
+    assert not Path(next(iter(roots))).exists()
 
 
 def test_torrent_removed_from_qbit_mid_wait(conn, tmp_path, make_season, season_data, stack):

@@ -181,6 +181,9 @@ def test_full_flow_through_the_api(env):
     assert [f["status"] for f in cand["files"]] == ["identical", "identical"]
     assert c.get("/api/releases?status=done").json()["pagination"]["totalItems"] == 1
     assert c.get("/api/releases?status=error").json()["data"] == []
+    both = c.get("/api/releases?status=error&status=done").json()  # 0.2: several statuses
+    assert both["pagination"]["totalItems"] == 1
+    assert c.get("/api/releases?status=bogus").status_code == 422
     assert c.delete(f"/api/sources/{sid}", headers=H).json()["error"]["code"] == "source.in_use"
     assert c.delete(f"/api/releases/{rid}", headers=H).status_code == 200
     assert qbit.deleted and c.get(f"/api/releases/{rid}").status_code == 404
@@ -300,3 +303,22 @@ def test_m3u_source_switches_from_file_to_url(env):
     conn = open_db(env[4] / "config")
     cfg = json.loads(conn.execute("SELECT config FROM sources WHERE id = ?", (sid,)).fetchone()[0])
     assert cfg == {"url": "http://iptv.invalid/get.php"}
+
+
+def test_catalogue_shows_titles_already_queued(env):
+    """0.2: several providers carry the same series; the one used must stand out."""
+    c, xt, *_ = env
+    sid = add_source(c, xt)["id"]
+    r = c.post(
+        "/api/releases",
+        headers=H,
+        json={"sourceId": sid, "kind": "series", "itemId": "100", "season": 1},
+    )
+    rid = r.json()["id"]
+    items = {i["id"]: i for i in c.get(f"/api/sources/{sid}/items?kind=series").json()["data"]}
+    assert items["100"]["releases"] == [{"id": rid, "season": 1, "status": "downloading"}]
+    assert items["101"]["releases"] == []
+    detail = c.get(f"/api/sources/{sid}/series/100").json()
+    assert [x["season"] for x in detail["releases"]] == [1]
+    release = c.get(f"/api/releases/{rid}").json()
+    assert (release["sourceId"], release["kind"], release["itemId"]) == (sid, "series", "100")

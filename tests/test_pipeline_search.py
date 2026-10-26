@@ -287,3 +287,16 @@ def test_research_removes_torrents_of_dropped_candidates(conn, tmp_path, make_se
     )
     run_search(conn, tmp_path, rid)
     assert not old.exists()
+
+
+def test_same_torrent_under_two_urls_is_listed_once(conn, tmp_path, make_season, prowl):
+    """Real test: Prowlarr returned one C411 result twice (two download URLs)."""
+    rid = analysed_season(conn, make_season)
+    for torrent_id in ("a", "b"):
+        prowl.add(
+            "Nimbus", "Northwind.Precinct.S01.1080p.WEB-DL-GRP", sum(SIZES), torrent_id=torrent_id
+        )
+    run_search(conn, tmp_path, rid)
+    assert len(candidates(conn, rid)) == 1
+    run_search(conn, tmp_path, rid)  # a new search does not add it back either
+    assert len(candidates(conn, rid)) == 1

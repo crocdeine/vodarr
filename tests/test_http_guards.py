@@ -168,3 +168,15 @@ def test_message_params_named_like_error_arguments_are_kept():
     r = error(502, "source.http_error", None, status=503, code="x", headers="y")
     assert r.status_code == 502
     assert json.loads(r.body)["error"]["params"] == {"status": 503, "code": "x", "headers": "y"}
+
+
+def test_unknown_host_gets_a_readable_page_in_a_browser(client):
+    """0.2: the 421 JSON confused users reaching VODarr through a new name (Tailscale...)."""
+    browser = {"Host": "<b>nas.example</b>", "Accept": "text/html,application/xhtml+xml"}
+    r = client.get("/", headers=browser)
+    assert r.status_code == 421 and r.headers["content-type"].startswith("text/html")
+    assert "VODARR_ALLOWED_HOSTS" in r.text and "&lt;b&gt;nas.example&lt;/b&gt;" in r.text
+    assert "<b>nas" not in r.text  # the Host header is escaped
+    assert "content-security-policy" in r.headers
+    api = client.get("/api/health", headers=browser)
+    assert api.json()["error"]["code"] == "http.host_not_allowed"  # the API keeps its JSON

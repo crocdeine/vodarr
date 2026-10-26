@@ -190,7 +190,7 @@ def test_e4_no_release(stack):
     assert s["restore"] == ("skipped", "restore.no_reference")
     assert s["seed"] == ("skipped", "seed.nothing")
     assert [os.path.getsize(p) for p in stack.local(rid)] == [len(c) + 6 for c in data]  # untouched
-    assert pipeline.status(stack.conn, rid) == "done"
+    assert pipeline.status(stack.conn, rid) == "no_match"
 
 
 def test_e5_movie_with_missing_annexes(stack):

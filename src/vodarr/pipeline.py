@@ -160,7 +160,8 @@ def _reset(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
 
 def status(conn: sqlite3.Connection, release_id: str) -> str:
     """Aggregated status, computed, never stored (AC-PIPE-04):
-    downloading | processing | action_required | done | error."""
+    downloading | processing | action_required | done | no_match | error.
+    no_match: finished, but nothing linked or seeded (no identical release on the trackers)."""
     rows = conn.execute(
         "SELECT name, state, msg_code FROM stages WHERE release_id = ?", (release_id,)
     ).fetchall()
@@ -187,7 +188,12 @@ def status(conn: sqlite3.Connection, release_id: str) -> str:
     ).fetchone()
     if waiting:
         return "action_required"
-    return "done"
+    seeded = conn.execute(
+        "SELECT 1 FROM candidates WHERE release_id = ?"
+        " AND (link_root IS NOT NULL OR added_to_qbit = 1)",
+        (release_id,),
+    ).fetchone()
+    return "done" if seeded else "no_match"
 
 
 def handlers() -> dict[str, Handler]:

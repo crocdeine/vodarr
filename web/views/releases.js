@@ -5,15 +5,17 @@
 import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { bytes, language, t, tm } from "../i18n.js";
-import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, poster, pill, progress, segmented, timeline, toast, toastError } from "../ui.js";
+import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, poster, pill, progress, select, timeline, toast, toastError } from "../ui.js";
 
 const FILTERS = [
   ["all", null],
   ["active", ["downloading", "processing"]],
   ["action", ["action_required"]],
   ["done", ["done"]],
+  ["no_match", ["no_match"]],
   ["error", ["error"]],
 ];
+const PAGE = 50;
 const TABS = ["overview", "download", "identification", "crossseed"];
 
 // Technical metadata read by ffprobe after download (0.1.1).
@@ -54,7 +56,7 @@ function techFacts(media) {
 }
 
 export function releasesView(main, releaseId, ctx) {
-  const state = { filter: "all", tab: "overview", selected: releaseId, items: [], seen: {} };
+  const state = { filter: "all", page: 1, tab: "overview", selected: releaseId, items: [], seen: {} };
 
   // Polling redraws only what changed: buttons stay put under the pointer.
   function changed(key, data) {
@@ -65,14 +67,18 @@ export function releasesView(main, releaseId, ctx) {
   }
   const filterRoot = h("div");
   const rows = h("div", { class: "rows", "aria-live": "polite" });
+  const pager = h("div", { class: "pager" });
   const listPane = h("section", { class: "pane list" },
-    h("header", { class: "pane-head toolbar" }, h("h1", { class: "title" }, t("releases.title")), filterRoot), rows);
+    h("header", { class: "pane-head toolbar" }, h("h1", { class: "title" }, t("releases.title")), filterRoot), rows, pager);
   const detailPane = h("section", { class: "pane" });
   main.append(h("div", { class: "split" }, listPane, detailPane));
 
   function drawFilters() {
-    replace(filterRoot, segmented(FILTERS.map(([key]) => [key, t(`releases.filter.${key}`)]), state.filter,
-      (key) => { state.filter = key; drawFilters(); drawList(); }, t("releases.title")));
+    // A select, not tabs: six statuses do not fit the list column.
+    replace(filterRoot, select(FILTERS.map(([key]) => [key, t(`releases.filter.${key}`)]), state.filter, {
+      "aria-label": t("releases.filter.label"),
+      onchange: (e) => { state.filter = e.currentTarget.value; state.page = 1; state.seen = {}; loadList(); },
+    }));
   }
 
   function line(r) {
@@ -96,21 +102,28 @@ export function releasesView(main, releaseId, ctx) {
   }
 
   function drawList() {
-    const allowed = FILTERS.find(([key]) => key === state.filter)[1];
-    const items = state.items.filter((r) => !allowed || allowed.includes(r.status));
+    const items = state.items;
     replace(rows, items.length ? items.map((r) => h("a", {
       class: "row", href: `#/releases/${r.id}`, "aria-current": r.id === state.selected ? "true" : undefined,
     }, poster(coverOf(r)),
       h("div", { class: "grow" }, h("div", { class: "t" }, r.title), h("div", { class: "s" }, line(r)),
         r.status === "downloading" && r.total ? progress(r.done, r.total) : null),
-      pill(r.status))) : emptyState(t("releases.empty")));
+      pill(r.status))) : emptyState(t(state.filter === "all" ? "releases.empty" : "releases.empty_filtered")));
   }
 
   async function loadList() {
     try {
-      const page = await api.get("/releases?pageSize=200");
+      const params = new URLSearchParams({ page: state.page, pageSize: PAGE });
+      for (const status of FILTERS.find(([key]) => key === state.filter)[1] || []) params.append("status", status);
+      const page = await api.get(`/releases?${params}`);
+      const { page: n, totalPages } = page.pagination;
+      if (n > totalPages && n > 1) { state.page = totalPages; return loadList(); } // last item of a page deleted
       state.items = page.data;
       if (changed("list", page.data)) drawList();
+      if (changed("pager", page.pagination)) replace(pager, totalPages > 1 && [
+        button(t("common.previous"), () => { state.page -= 1; loadList(); }, { small: true, disabled: n <= 1 }),
+        h("span", { class: "num" }, t("common.page", { page: n, pages: totalPages })),
+        button(t("common.next"), () => { state.page += 1; loadList(); }, { small: true, disabled: n >= totalPages })]);
     } catch (error) {
       replace(rows, emptyState(t(error.code, error.params)));
     }
@@ -234,7 +247,8 @@ export function releasesView(main, releaseId, ctx) {
     }, t(`releases.tab.${tab}`))));
     replace(detailPane,
       h("header", { class: "glass-head" },
-        h("div", { class: "crumb" }, detail.kind === "movie" ? t("releases.scope.movie") : t("explorer.season", { season: detail.season })),
+        h("div", { class: "crumb inline" }, detail.kind === "movie" ? t("releases.scope.movie") : t("explorer.season", { season: detail.season }),
+          h("a", { href: `#/explorer/${detail.sourceId}/${detail.kind}/${encodeURIComponent(detail.itemId)}` }, t("releases.open_in_explorer"))),
         h("div", { class: "inline" }, h("h2", { class: "title grow" }, detail.title), pill(detail.status),
           button("", () => remove(detail), { kind: "icon", iconName: "trash" })),
         tabs),

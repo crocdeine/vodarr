@@ -121,13 +121,15 @@ export function emptyState(text) {
 
 
 
+const brokenPosters = new Set(); // lists redraw every few seconds: don't retry a dead image
+
 /** A list poster; http(s) only (providers still serve some over http), placeholder otherwise. */
 export function poster(url) {
   const placeholder = () => h("span", { class: "poster" });
-  return url && /^https?:\/\//.test(url)
+  return url && /^https?:\/\//.test(url) && !brokenPosters.has(url)
     ? h("img", {
         class: "poster", src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
-        onerror: (e) => e.currentTarget.replaceWith(placeholder()),
+        onerror: (e) => { brokenPosters.add(url); e.currentTarget.replaceWith(placeholder()); },
       })
     : placeholder();
 }

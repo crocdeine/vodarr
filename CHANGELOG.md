@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.2.0 — 2026-10-26
+
+### Added
+- **"No match" status**: a release that was checked but has nothing linked or seeded (no
+  identical release on your trackers) is no longer shown as "Done".
+- The releases list is paginated (no more 200-release cap) and filtered by status on the
+  server; the filter is a drop-down list.
+- A browser reaching VODarr under a name missing from `VODARR_ALLOWED_HOSTS` gets a readable
+  page naming the setting to change (the API keeps its JSON error).
+- Explorer: titles already downloaded show their releases ("S4 · Done"), each season links to
+  its release, and a release links back to the exact catalogue entry it came from ("Open in
+  the Explorer") — useful when several providers carry the same series.
+
+### Fixed
+- One torrent returned twice by Prowlarr (two download URLs) is listed and checked once.
+- Importing a cross-seed `config.js`: top-level settings win over the same keys in nested
+  objects.
+- A torrent cross-posted on several trackers (same infohash) gets one link folder, the one
+  qBittorrent seeds.
+- A poster that fails to load is no longer retried (and shown broken) at every refresh.
+- Downloads drawer: with many files the cards were squeezed and unreadable. Files are now
+  grouped by release ("Lupin · Season 3", "1/8 done") with one compact line per episode, and
+  the drawer scrolls.
+
 ## 0.1.3 — 2026-10-26
 
 ### Added

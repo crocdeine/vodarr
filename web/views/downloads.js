@@ -38,19 +38,47 @@ export function downloadsDrawer() {
     }
   }
 
-  function item(d) {
+  const pad = (n) => String(n).padStart(2, "0");
+
+  // One card per release ("Lupin · Season 3"), one compact line per file: the queue stays
+  // readable with dozens of episodes.
+  function group(files) {
+    const first = files[0];
+    const done = files.filter((d) => d.status === "done").length;
+    return h("section", { class: "card dl-group" },
+      h("div", { class: "dl-head" },
+        h("div", { class: "grow" }, h("b", {}, first.title),
+          h("div", { class: "muted small" }, first.season == null ? t("releases.scope.movie") : t("explorer.season", { season: first.season }))),
+        h("span", { class: "muted num small" }, t("downloads.group_done", { done, total: files.length }))),
+      files.map(line));
+  }
+
+  function line(d) {
     const running = d.status === "running";
-    return h("div", { class: "card card-b stack" },
-      h("div", { class: "inline" }, h("b", { class: "grow" }, d.title), pill(d.status)),
-      h("small", { class: "mono" }, d.filename),
+    const label = d.season != null && d.episode != null ? `S${pad(d.season)}E${pad(d.episode)}` : d.filename;
+    return h("div", { class: "dl-line" },
+      h("div", { class: "inline" },
+        h("span", { class: "mono grow", title: d.filename }, label),
+        h("span", { class: "muted num small" },
+          d.status === "done" ? bytes(d.total || d.done)
+            : d.total ? `${bytes(d.done)} / ${bytes(d.total)}`
+            : d.done ? bytes(d.done) : "", // queued: size not known yet
+          running && d.rate > 0 && ` · ${t("downloads.rate", { rate: bytes(d.rate) })}`),
+        pill(d.status),
+        ["queued", "running"].includes(d.status) && iconButton(t("downloads.cancel"), "x", () => api.post(`/downloads/${d.id}/cancel`)),
+        ["cancelled", "error"].includes(d.status) && iconButton(t("downloads.remove"), "trash", () => api.del(`/downloads/${d.id}`))),
       running && progress(d.done, d.total),
-      h("div", { class: "inline muted num" },
-        d.total ? `${bytes(d.done)} / ${bytes(d.total)}` : bytes(d.done),
-        running && d.rate > 0 && `· ${t("downloads.rate", { rate: bytes(d.rate) })}`,
-        d.error && `· ${t(d.error, d.errorParams || {})}`,
-        h("span", { class: "grow" }),
-        ["queued", "running"].includes(d.status) && button(t("downloads.cancel"), () => act(() => api.post(`/downloads/${d.id}/cancel`)), { small: true }),
-        ["queued", "cancelled", "error"].includes(d.status) && button(t("downloads.remove"), () => act(() => api.del(`/downloads/${d.id}`)), { small: true, kind: "ghost" })));
+      d.error && h("small", { class: "error-text" }, t(d.error, d.errorParams || {})));
+  }
+
+  function iconButton(label, name, fn) {
+    return h("button", { class: "btn ghost icon small", type: "button", "aria-label": label, title: label, onclick: () => act(fn) }, icon(name));
+  }
+
+  function groups(data) {
+    const byRelease = new Map();
+    for (const d of data) byRelease.set(d.releaseId, [...(byRelease.get(d.releaseId) || []), d]);
+    return [...byRelease.values()].map(group);
   }
 
   async function refresh() {
@@ -63,7 +91,7 @@ export function downloadsDrawer() {
       const queued = data.filter((d) => d.status === "queued");
       summary.textContent = t("downloads.summary", { active: active.length, queued: queued.length });
       replace(bar, active[0] ? progress(active[0].done, active[0].total) : null);
-      replace(list, data.length ? data.map(item) : emptyState(t("downloads.empty")));
+      replace(list, data.length ? groups(data) : emptyState(t("downloads.empty")));
     } catch {
       // the sidebar card stays as it was; errors surface in the views
     }

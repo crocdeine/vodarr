@@ -487,6 +487,7 @@ svg.i {
 }
 
 .s-skipped,
+.s-no_match,
 .s-cancelled {
   --c: var(--skipped);
 }
@@ -739,10 +740,51 @@ td small {
 }
 
 .drawer-b {
+  flex: 1;
+  min-height: 0; /* scroll inside the drawer instead of squeezing every card */
   overflow: auto;
   padding: var(--s-3) var(--s-5) var(--s-6);
   display: grid;
+  align-content: start;
+  grid-auto-rows: max-content; /* cards clip their overflow: without this the grid squeezes them */
   gap: var(--s-3);
+}
+
+.dl-group {
+  padding: var(--s-3) var(--s-4);
+}
+
+.dl-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.dl-line {
+  display: grid;
+  gap: var(--s-1);
+  padding: var(--s-2) 0;
+  border-bottom: var(--hairline) solid var(--line);
+}
+
+.dl-line:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.dl-line .btn.icon {
+  width: var(--s-7);
+  height: var(--s-7);
+}
+
+.small {
+  font-size: var(--fs-xs);
+}
+
+.error-text {
+  color: var(--error);
 }
 
 dialog {
@@ -949,4 +991,11 @@ dialog::backdrop {
   .meta {
     grid-template-columns: 1fr;
   }
+}
+
+/* Explorer: releases already made from a title */
+.queued {
+  flex-wrap: wrap;
+  gap: var(--s-1);
+  margin-top: var(--s-1);
 }

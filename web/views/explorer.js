@@ -5,11 +5,13 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { icon } from "../icons.js";
 import { t } from "../i18n.js";
-import { button, card, emptyState, fetchMeta, input, metaPanel, poster, segmented, select, toast, toastError } from "../ui.js";
+import { button, card, emptyState, fetchMeta, input, metaPanel, pill, poster, segmented, select, toast, toastError } from "../ui.js";
 
 const PAGE = 50;
 
-export function explorerView(main, sourceId, ctx) {
+export function explorerView(main, arg, ctx) {
+  // #/explorer/<source>[/<kind>/<item>]: a release links back to the exact catalogue entry.
+  const [sourceId, linkKind, linkItem] = (arg || "").split("/");
   if (!ctx.sources.length) {
     main.append(h("section", { class: "pane" }, h("header", { class: "glass-head" }, h("h1", { class: "title" }, t("explorer.title"))),
       h("div", { class: "content" }, emptyState(t("explorer.no_source")), h("a", { class: "btn primary", href: "#/settings" }, t("nav.settings")))));
@@ -83,7 +85,19 @@ export function explorerView(main, sourceId, ctx) {
         e.currentTarget.setAttribute("aria-current", "true");
         loadDetail();
       },
-    }, poster(item.cover), h("div", { class: "grow" }, h("div", { class: "t" }, item.name), h("div", { class: "s num" }, item.year || "")));
+    }, poster(item.cover), h("div", { class: "grow" }, h("div", { class: "t" }, item.name), h("div", { class: "s num" }, item.year || ""),
+      queuedPills(item.releases)));
+  }
+
+  /** Releases already made from this title: "S4 · Done"… so one provider's entry stands out. */
+  function queuedPills(releases) {
+    if (!releases?.length) return null;
+    return h("div", { class: "inline queued" }, releases.map((r) =>
+      pill(r.status, r.season == null ? t(`status.${r.status}`) : `S${r.season} · ${t(`status.${r.status}`)}`)));
+  }
+
+  function releaseLink(release) {
+    return release && h("a", { class: "btn small", href: `#/releases/${release.id}` }, pill(release.status), t("explorer.open_release"));
   }
 
   async function loadDetail() {
@@ -113,6 +127,7 @@ export function explorerView(main, sourceId, ctx) {
       await api.post("/releases", { sourceId: state.source.id, itemId: item.id, ...body });
       toast(t("explorer.queued"));
       ctx.drawer?.refresh();
+      if (state.item === item) loadDetail(); // show the new release on its season
     } catch (error) {
       toastError(error);
     }
@@ -128,9 +143,10 @@ export function explorerView(main, sourceId, ctx) {
         selectionButton.textContent = t("explorer.download_selection", { count: n });
       };
       update();
+      const made = (detail.releases || []).find((r) => r.season === season.season);
       return card(t("explorer.season", { season: season.season }),
         h("div", { class: "card-b inline" }, h("span", { class: "muted" }, t("explorer.episodes", { count: season.episodes.length })),
-          h("span", { class: "grow" }),
+          h("span", { class: "grow" }), releaseLink(made),
           button(t("explorer.download_season"), () => queue(item, { kind: "series", season: season.season }), { kind: "primary", iconName: "down", small: true }),
           selectionButton),
         season.episodes.map((ep) => {
@@ -145,9 +161,15 @@ export function explorerView(main, sourceId, ctx) {
   function movieDetail(item, detail) {
     return h("div", {}, header(item, detail), h("div", { class: "content" },
       card(t("explorer.release"), h("div", { class: "card-b stack" }, h("p", { class: "mono" }, detail.release || t("common.unknown")),
-        h("div", {}, button(t("explorer.download_movie"), () => queue(item, { kind: "movie" }), { kind: "primary", iconName: "down" }))))));
+        h("div", { class: "inline" }, button(t("explorer.download_movie"), () => queue(item, { kind: "movie" }), { kind: "primary", iconName: "down" }),
+          releaseLink((detail.releases || [])[0]))))));
   }
 
+  if (linkItem && (linkKind === "series" || linkKind === "movie")) {
+    state.kind = linkKind;
+    state.item = { id: decodeURIComponent(linkItem), name: "" };
+    loadDetail();
+  }
   drawKind();
   loadCategories();
   loadItems();

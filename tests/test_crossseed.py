@@ -79,3 +79,15 @@ def test_file_checks(tmp_path):
     ok = tmp_path / "ok.js"
     ok.write_text(CONFIG)
     assert crossseed.import_file(str(ok))["values"]["linkType"] == "hardlink"
+
+
+def test_top_level_value_wins_over_a_nested_one():
+    """Bug hunt: a linkDirs inside a nested object beat the real top-level linkDir."""
+    text = """module.exports = {
+        nested: { linkDirs: ["/wrong"], linkType: "symlink" },
+        linkDir: "/data/old",
+        linkType: "hardlink",
+    };"""
+    out = crossseed.parse(text)["values"]
+    assert out["linkDirs"] == ["/data/old"]
+    assert out["linkType"] == "hardlink"

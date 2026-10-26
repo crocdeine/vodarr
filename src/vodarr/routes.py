@@ -11,7 +11,7 @@ import time
 import urllib.parse
 from collections.abc import Callable
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Query
 from pydantic import Field
@@ -33,6 +33,9 @@ class SourceIn(ApiModel):
     url: str | None = None
     path: str | None = None
     split_prefix: bool = False
+
+
+ReleaseStatus = Literal["downloading", "processing", "action_required", "done", "no_match", "error"]
 
 
 class SourcePatch(ApiModel):
@@ -350,15 +353,36 @@ def register(
             items = [i for i in items if i["category_id"] == category]
         if q:
             items = sources.search(items, q)
-        return page_of(sorted(items, key=lambda i: sources.fold(i["name"])), page, page_size)
+        out = page_of(sorted(items, key=lambda i: sources.fold(i["name"])), page, page_size)
+        # Titles already queued: several providers often carry the same series.
+        out["data"] = [{**i, "releases": queued(source_id, kind, i["id"])} for i in out["data"]]
+        return out
+
+    def queued(source_id: str, kind: str, item_id: str) -> list[dict]:
+        conn = db()
+        rows = conn.execute(
+            "SELECT id, season FROM releases WHERE source_id = ? AND kind = ? AND item_id = ?"
+            " ORDER BY season",
+            (source_id, kind, str(item_id)),
+        ).fetchall()
+        return [
+            {"id": r["id"], "season": r["season"], "status": pipeline.status(conn, r["id"])}
+            for r in rows
+        ]
 
     @api.get("/sources/{source_id}/series/{item_id}")
     def sources_series(source_id: str, item_id: str):
-        return catalogue(source_id).series(item_id)
+        return {
+            **catalogue(source_id).series(item_id),
+            "releases": queued(source_id, "series", item_id),
+        }
 
     @api.get("/sources/{source_id}/movies/{item_id}")
     def sources_movie(source_id: str, item_id: str):
-        return catalogue(source_id).movie(item_id)
+        return {
+            **catalogue(source_id).movie(item_id),
+            "releases": queued(source_id, "movie", item_id),
+        }
 
     @api.post("/releases", status_code=201)
     def releases_create(body: ReleaseIn):
@@ -411,8 +435,7 @@ def register(
 
     @api.get("/releases")
     def releases_list(
-        status: Literal["downloading", "processing", "action_required", "done", "error"]
-        | None = None,
+        status: Annotated[list[ReleaseStatus] | None, Query()] = None,  # repeatable
         page: int = Query(1, ge=1),
         page_size: int = Query(50, ge=1, le=200, alias="pageSize"),
     ):
@@ -420,7 +443,7 @@ def register(
         rows = conn.execute("SELECT * FROM releases ORDER BY created_at DESC, id").fetchall()
         items = [release_out(conn, r) for r in rows]
         if status:
-            items = [i for i in items if i["status"] == status]
+            items = [i for i in items if i["status"] in status]
         return page_of(items, page, page_size)
 
     def release_row(release_id: str) -> sqlite3.Row:

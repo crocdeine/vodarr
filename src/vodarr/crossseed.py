@@ -50,21 +50,46 @@ def _literal(raw: str):
     return _string(raw)
 
 
-def parse(text: str) -> dict:
-    """{"values": {key: value}, "manual": [keys present but not literal]}."""
-    code = strip_comments(text)
-    values, manual = {}, []
-    for key in KEYS:
-        m = re.search(rf"(?<![\w$.])['\"]?{key}['\"]?\s*:", code)
-        if not m:
+def _depths(code: str) -> list[int]:
+    """Brace depth at each position, string contents ignored."""
+    out, depth, i, n = [0] * (len(code) + 1), 0, 0, len(code)
+    while i < n:
+        c = code[i]
+        out[i] = depth
+        if c in "'\"`":
+            j = i + 1
+            while j < n and code[j] != c:
+                j += 2 if code[j] == "\\" else 1
+            for k in range(i, min(j + 1, n)):
+                out[k] = depth
+            i = j + 1
             continue
+        depth += (c == "{") - (c == "}")
+        i += 1
+    return out
+
+
+def parse(text: str) -> dict:
+    """{"values": {key: value}, "manual": [keys present but not literal]}. A key set in a
+    nested object (a per-tracker override, an example) loses to the top-level one."""
+    code = strip_comments(text)
+    depth = _depths(code)
+    values, manual, level = {}, [], {}
+    for key in KEYS:
+        found = list(re.finditer(rf"(?<![\w$.])['\"]?{key}['\"]?\s*:", code))
+        if not found:
+            continue
+        m = min(found, key=lambda f: depth[f.start()])  # shallowest, first on ties
+        level[key] = depth[m.start()]
         lit = VALUE.match(code, m.end())
         if lit:
             values[key] = _literal(lit.group("v"))
         else:
             manual.append(key)
     if "linkDir" in values:  # older cross-seed: a single linkDir
-        values.setdefault("linkDirs", [values["linkDir"]])
+        if level["linkDir"] < level.get("linkDirs", 1 << 30):
+            values["linkDirs"] = [values["linkDir"]]
+            manual = [k for k in manual if k != "linkDirs"]
         del values["linkDir"]
     if "linkDir" in manual:
         manual = [k for k in manual if k != "linkDir"] + (

@@ -49,7 +49,7 @@ def test_stages_chain_in_order(conn, tmp_path):
     run_all(conn, tmp_path, handlers(log))
     assert log == ["analyse", "search", "verify", "restore", "seed"]
     assert set(states(conn, rid).values()) == {"done"}
-    assert pipeline.status(conn, rid) == "done"
+    assert pipeline.status(conn, rid) == "no_match"  # finished, nothing seeded
     msg = conn.execute(
         "SELECT msg_code, pct FROM stages WHERE release_id = ? AND name = 'seed'", (rid,)
     ).fetchone()
@@ -74,7 +74,7 @@ def test_skipped_stage_continues(conn, tmp_path):
     run_all(conn, tmp_path, handlers(log, search=skip))
     assert states(conn, rid)["search"] == "skipped"
     assert log == ["analyse", "verify", "restore", "seed"]
-    assert pipeline.status(conn, rid) == "done"
+    assert pipeline.status(conn, rid) == "no_match"  # finished, nothing seeded
 
 
 def test_error_stops_release(conn, tmp_path):
@@ -164,6 +164,8 @@ def test_action_required_status(conn, tmp_path):
     conn.execute(cand, (rid, "Nimbus", "partial"))
     assert pipeline.status(conn, rid) == "action_required"
     conn.execute(cand, (rid, "Aurora", "identical"))  # the scope already has a reference
+    assert pipeline.status(conn, rid) == "no_match"  # identical but not linked yet
+    conn.execute("UPDATE candidates SET link_root = '/links/x' WHERE indexer = 'Aurora'")
     assert pipeline.status(conn, rid) == "done"
 
 
@@ -238,3 +240,16 @@ def test_release_without_files_is_not_stuck_downloading(conn, tmp_path):
     conn.execute("DELETE FROM files WHERE release_id = ?", (rid,))
     downloads._update_download_stage(conn, rid)
     assert states(conn, rid)["download"] == "error"
+
+
+def test_no_match_status(conn, tmp_path):
+    """0.2: a finished release with nothing linked or seeded is not "done"."""
+    rid = make_release(conn, tmp_path)
+    run_all(conn, tmp_path, handlers([]))
+    assert pipeline.status(conn, rid) == "no_match"
+    conn.execute(
+        "INSERT INTO candidates (release_id, indexer, title, scope, is_candidate, status,"
+        " added_to_qbit) VALUES (?, 'Nimbus', 't', 'pack', 1, 'identical', 1)",
+        (rid,),
+    )
+    assert pipeline.status(conn, rid) == "done"

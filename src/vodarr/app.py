@@ -1,6 +1,7 @@
 """FastAPI application: HTTP guards, authentication, routes (ADR-0004, ADR-0005)."""
 
 import contextlib
+import html
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import Field
 from pydantic.alias_generators import to_camel
@@ -77,6 +78,22 @@ def error(http_status: int, code: str, headers: dict | None = None, /, **params:
         status_code=http_status,
         headers={**SECURITY_HEADERS, **(headers or {})},
     )
+
+
+def host_page(host: str) -> HTMLResponse:
+    """A browser reaching VODarr under a name it does not know: say which setting to change.
+    The name is the request's own Host header: escaped, and only shown back to that browser."""
+    name = html.escape(host[:255])
+    body = f"""<!doctype html><html><head><meta charset="utf-8">
+<meta name="color-scheme" content="dark light"><title>VODarr</title></head><body>
+<h1>VODarr</h1>
+<p>This address is not allowed: <code>{name}</code>.<br>
+Add it to <code>VODARR_ALLOWED_HOSTS</code> (comma-separated) and recreate the container.</p>
+<p lang="fr">Cette adresse n'est pas autorisée : <code>{name}</code>.<br>
+Ajoutez-la à <code>VODARR_ALLOWED_HOSTS</code> (séparée par des virgules) puis recréez le
+conteneur.</p>
+</body></html>"""
+    return HTMLResponse(body, status_code=421, headers=SECURITY_HEADERS)
 
 
 def status_for(code: str) -> int:
@@ -311,6 +328,10 @@ def create_app(
         host = (request.headers.get("host") or "").lower()
         host = re.sub(r":\d+$", "", host)
         if host not in hosts:
+            if "text/html" in request.headers.get("accept", "") and not request.url.path.startswith(
+                "/api/"
+            ):
+                return host_page(host)
             return error(421, "http.host_not_allowed")
         if any(part.startswith(".") for part in request.url.path.split("/")):
             return error(404, "http.not_found")  # never serve dotfiles (.DS_Store, .git…)
