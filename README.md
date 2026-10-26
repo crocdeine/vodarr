@@ -155,7 +155,7 @@ VODarr acts on your behalf in these ways; each one is deliberate.
 - **`.torrent` downloads from your trackers.** To verify a candidate, VODarr downloads its
   `.torrent` through Prowlarr — only filtered candidates, stopping at the first identical one
   per tracker and scope. On some private trackers this counts as a *snatch*: check their
-  hit-and-run rules first. Reference `.torrent` files stay in `/config/torrents` (they contain
+  hit-and-run rules first; *Settings › Prowlarr* can cap the checks per tracker. Reference `.torrent` files stay in `/config/torrents` (they contain
   your passkey) and are never served by the API.
 - **Downloaded files never move.** They are not moved, renamed or copied; the rebuilt release
   is made of links pointing to them.
@@ -247,8 +247,7 @@ VODARR_CONFIG=.dev-config VODARR_ALLOWED_HOSTS=localhost \
 ```
 
 Design decisions in [`docs/adr/`](docs/adr/) (in
-French). The interface is plain HTML, CSS and JavaScript modules with no build step; the design
-system reference is at `#/design`. Screenshots in this README come from the fake services:
+French). The interface is plain HTML, CSS and JavaScript modules with no build step. Screenshots in this README come from the fake services:
 every title, tracker and file in them is made up.
 
 Issues and pull requests are welcome. Please keep test data synthetic and never paste real

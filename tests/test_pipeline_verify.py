@@ -240,3 +240,29 @@ def test_research_after_seed_keeps_references(
     before = len(prowl.downloaded())
     stages.stage_verify(ctx)
     assert len(prowl.downloaded()) == before  # already in place: not fetched again
+
+
+def test_checks_per_tracker_can_be_capped(
+    conn, tmp_path, make_season, season_data, prowl, monkeypatch
+):
+    """Real test: 11 .torrent fetched from one tracker for one season (each may be a snatch)."""
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
+    other = [random_bytes(len(d), 90 + i) for i, d in enumerate(season_data)]
+    total = sum(map(len, season_data))
+    titles = [f"Northwind.Precinct.S01.1080p.WEB-DL-V{i}" for i in range(3)]
+    rid, ctx, _ = setup(
+        conn,
+        tmp_path,
+        make_season,
+        season_data,
+        prowl,
+        [("Nimbus", t, total, pack_torrent(other, t)) for t in titles],
+    )
+    services = core.get_setting(conn, "services")
+    services["prowlarr"]["maxChecksPerTracker"] = 2
+    core.set_setting(conn, "services", services)
+    stages.stage_verify(ctx)
+    statuses = [(s, p) for _, _, s, p in cands(conn, rid)]
+    assert statuses.count(("different", None)) == 2
+    assert statuses.count(("skipped", "verify.tracker_limit")) == 1
+    assert len(list((tmp_path / "config" / "torrents").iterdir())) == 2

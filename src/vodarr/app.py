@@ -45,8 +45,8 @@ STATUS = {
 }
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'self'; img-src 'self' https: data:; base-uri 'none'; form-action 'self';"
-        " frame-ancestors 'none'"
+        "default-src 'self'; img-src 'self' https: http: data:; base-uri 'none';"
+        " form-action 'self'; frame-ancestors 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
@@ -135,6 +135,7 @@ class Password(ApiModel):
 class ProwlarrIn(ApiModel):
     url: str | None = Text
     api_key: str | None = Text
+    max_checks_per_tracker: int | None = Field(None, ge=0, le=100)
 
 
 class QbitIn(ApiModel):

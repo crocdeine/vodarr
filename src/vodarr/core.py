@@ -78,6 +78,10 @@ MIGRATIONS = [
     ALTER TABLE files ADD COLUMN dl_error_params TEXT;
     ALTER TABLE candidates ADD COLUMN problem_params TEXT;
     """,
+    # 0.1.3: the catalogue's poster, shown in the releases list.
+    """
+    ALTER TABLE releases ADD COLUMN cover TEXT;
+    """,
 ]
 
 

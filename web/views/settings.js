@@ -106,7 +106,7 @@ export function settingsView(main, _arg, ctx) {
     const q = s.services.qbittorrent;
     const k = s.services.tmdb;
     return card(t("settings.services"), form(async (data) => save({ services: {
-      prowlarr: { url: data.get("purl"), apiKey: data.get("pkey") },
+      prowlarr: { url: data.get("purl"), apiKey: data.get("pkey"), maxChecksPerTracker: Number(data.get("plimit") || 0) },
       qbittorrent: { url: data.get("qurl"), username: data.get("quser"), password: data.get("qpass") },
       tmdb: { apiKey: data.get("tkey") },
     } }),
@@ -115,6 +115,7 @@ export function settingsView(main, _arg, ctx) {
     h("div", { class: "grid2" },
       field(t("settings.url"), input({ name: "purl", value: p.url, placeholder: "http://prowlarr:9696" })),
       field(t("settings.api_key"), input({ name: "pkey", type: "password", value: p.apiKey, autocomplete: "off" }))),
+    field(t("settings.max_checks"), input({ name: "plimit", type: "number", min: 0, max: 100, step: 1, value: p.maxChecksPerTracker ?? 0, inputmode: "numeric" }), t("settings.max_checks_hint")),
     h("div", {}, button(t("common.test"), (e) => testService("prowlarr", e.currentTarget), { small: true })),
     h("h4", {}, t("settings.qbittorrent")),
     field(t("settings.url"), input({ name: "qurl", value: q.url, placeholder: "http://qbittorrent:8080" })),

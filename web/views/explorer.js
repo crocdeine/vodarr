@@ -5,7 +5,7 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { icon } from "../icons.js";
 import { t } from "../i18n.js";
-import { button, card, emptyState, fetchMeta, input, metaPanel, segmented, select, toast, toastError } from "../ui.js";
+import { button, card, emptyState, fetchMeta, input, metaPanel, poster, segmented, select, toast, toastError } from "../ui.js";
 
 const PAGE = 50;
 
@@ -72,15 +72,6 @@ export function explorerView(main, sourceId, ctx) {
     } catch (error) {
       replace(rows, emptyState(t(error.code, error.params)));
     }
-  }
-
-  function poster(url) {
-    return url && /^https:\/\//.test(url)
-      ? h("img", {
-          class: "poster", src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
-          onerror: (e) => e.currentTarget.replaceWith(h("span", { class: "poster" })),
-        })
-      : h("span", { class: "poster" });
   }
 
   function itemRow(item) {

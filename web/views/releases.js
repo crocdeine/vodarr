@@ -5,7 +5,7 @@
 import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { bytes, language, t, tm } from "../i18n.js";
-import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, pill, progress, segmented, timeline, toast, toastError } from "../ui.js";
+import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, poster, pill, progress, segmented, timeline, toast, toastError } from "../ui.js";
 
 const FILTERS = [
   ["all", null],
@@ -80,12 +80,27 @@ export function releasesView(main, releaseId, ctx) {
     return t("releases.season_line", { season: r.season, files: r.files });
   }
 
+  // Releases queued before 0.1.3 have no catalogue poster: TMDB's, looked up once per release.
+  const tmdbCovers = new Map();
+  function coverOf(r) {
+    if (r.cover) return r.cover;
+    if (!tmdbCovers.has(r.id)) {
+      tmdbCovers.set(r.id, null);
+      fetchMeta(r.kind, { tmdbId: r.tmdbId, title: r.title, year: r.year }).then((meta) => {
+        if (!meta?.poster) return;
+        tmdbCovers.set(r.id, meta.poster);
+        drawList();
+      });
+    }
+    return tmdbCovers.get(r.id);
+  }
+
   function drawList() {
     const allowed = FILTERS.find(([key]) => key === state.filter)[1];
     const items = state.items.filter((r) => !allowed || allowed.includes(r.status));
     replace(rows, items.length ? items.map((r) => h("a", {
       class: "row", href: `#/releases/${r.id}`, "aria-current": r.id === state.selected ? "true" : undefined,
-    }, h("span", { class: "poster" }),
+    }, poster(coverOf(r)),
       h("div", { class: "grow" }, h("div", { class: "t" }, r.title), h("div", { class: "s" }, line(r)),
         r.status === "downloading" && r.total ? progress(r.done, r.total) : null),
       pill(r.status))) : emptyState(t("releases.empty")));

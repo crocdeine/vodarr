@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.3 — 2026-10-26
+
+### Added
+- Settings › Prowlarr: **maximum .torrent checks per tracker** for one release (0 = no limit).
+  Each check downloads a .torrent, which some private trackers count as a snatch; candidates
+  beyond the limit are listed as not checked.
+
+### Changed
+- The settings icon is a cog. The "Design system" page is removed (development only).
+
+### Fixed
+- Posters in lists: the releases list now shows the title's poster (the catalogue's, or TMDB's
+  for releases queued before this version), and posters served over plain http are no longer
+  blocked.
+- When VODarr cannot be reached (stopped, network down), the interface says so instead of
+  failing silently.
+
 ## 0.1.2 — 2026-10-25
 
 ### Changed

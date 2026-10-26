@@ -163,6 +163,7 @@ def test_full_flow_through_the_api(env):
     assert r.status_code == 201, r.text
     rid = r.json()["id"]
     assert r.json()["status"] == "downloading"
+    assert r.json()["cover"] == "https://img.invalid/n.jpg"  # shown in the releases list
     assert [i["status"] for i in c.get("/api/downloads").json()["data"]] == ["queued", "queued"]
     drain(tmp_path)
     detail = c.get(f"/api/releases/{rid}").json()

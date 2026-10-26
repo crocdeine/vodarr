@@ -64,3 +64,7 @@ La licence « Apple Design Resources » (version du 2023-07-13) réserve les kit
 - Aucun `node_modules`, aucun build : l'image copie `web/` tel quel.
 - Le choix de direction visuelle est la prochaine étape d'architecture, avant tout écran.
 - limite connue : rendu DOM manuel sans composant réactif ; envisager un micro-framework si les vues dépassent ~300 lignes chacune.
+
+## Mise à jour 0.1.3
+
+La page `#/design` est retirée de l'application : elle ne servait qu'au développement. Les jetons (`web/styles/tokens.css`) et leur test de contraste restent la référence.

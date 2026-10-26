@@ -6,14 +6,13 @@ import { editing, h, replace } from "./dom.js";
 import { icon } from "./icons.js";
 import { setLanguage, t } from "./i18n.js";
 import { authScreen } from "./views/auth.js";
-import { designView } from "./views/design.js";
 import { downloadsDrawer } from "./views/downloads.js";
 import { explorerView } from "./views/explorer.js";
 import { releasesView } from "./views/releases.js";
 import { settingsView } from "./views/settings.js";
 
 const root = document.getElementById("root");
-const VIEWS = { explorer: explorerView, releases: releasesView, settings: settingsView, design: designView };
+const VIEWS = { explorer: explorerView, releases: releasesView, settings: settingsView };
 const POLL_MS = 2000;
 const ctx = { settings: null, sources: [], navigate, reload: boot, applyUi, drawer: null };
 let current = null;
@@ -68,7 +67,6 @@ function sidebar() {
     navLink("explorer", "compass", t("nav.explorer")),
     navLink("releases", "layers", t("nav.releases")),
     navLink("settings", "gear", t("nav.settings")),
-    navLink("design", "swatch", t("nav.design")),
     ctx.sources.length > 0 && h("div", { class: "section-label" }, t("nav.sources")),
     ctx.sources.map((s) => h("a", { class: "nav", href: `#/explorer/${s.id}` }, icon(s.type === "m3u" ? "film" : "tv"), s.name)),
     h("div", { class: "grow" }),

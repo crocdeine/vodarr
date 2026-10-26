@@ -16,7 +16,8 @@ LANGUAGES = ("auto", "en", "fr")
 THEMES = ("auto", "dark", "light")
 DEFAULTS: dict[str, Any] = {
     "services": {
-        "prowlarr": {"url": "", "apiKey": ""},
+        # maxChecksPerTracker: .torrent files verified per tracker and release, 0 = no limit
+        "prowlarr": {"url": "", "apiKey": "", "maxChecksPerTracker": 0},
         "qbittorrent": {"url": "", "username": "", "password": ""},
         "tmdb": {"apiKey": ""},
     },
@@ -88,6 +89,9 @@ def validate(new: dict[str, Any]) -> None:
         dev = downloads.stat().st_dev
         if not any(d.stat().st_dev == dev for d in link_dirs):
             raise MsgError("settings.not_same_filesystem")  # AC-SET-04: hardlinks need it
+    limit = new["services"]["prowlarr"]["maxChecksPerTracker"]
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 0 <= limit <= 100:
+        raise MsgError("settings.bad_limit")
     for svc in new["services"].values():
         url = svc.get("url") or ""  # TMDB has none
         if url and not url.startswith(("http://", "https://")):

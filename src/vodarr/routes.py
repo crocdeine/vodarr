@@ -4,6 +4,7 @@ Every response is built by an explicit serializer: secrets and URLs never leave 
 import json
 import logging
 import math
+import re
 import sqlite3
 import threading
 import time
@@ -115,6 +116,7 @@ def release_out(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "created_at": row["created_at"],
         "status": pipeline.status(conn, row["id"]),
         "tmdb_id": row["tmdb_id"],
+        "cover": row["cover"],
         "files": files["n"],
         "done": files["done"],
         "total": files["total"],
@@ -394,8 +396,15 @@ def register(
             episodes,
             Path(root),
         )
-        if detail.get("tmdb_id"):
-            conn.execute("UPDATE releases SET tmdb_id = ? WHERE id = ?", (detail["tmdb_id"], rid))
+        cover = detail.get("cover")
+        cover = (
+            cover if isinstance(cover, str) and re.match(r"https?://\S{1,2000}$", cover) else None
+        )
+        conn.execute(
+            "UPDATE releases SET tmdb_id = coalesce(?, tmdb_id), cover = coalesce(?, cover)"
+            " WHERE id = ?",
+            (detail.get("tmdb_id") or None, cover, rid),
+        )
         wake["downloads"].set()
         row = conn.execute("SELECT * FROM releases WHERE id = ?", (rid,)).fetchone()
         return release_out(conn, row)

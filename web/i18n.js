@@ -27,7 +27,7 @@ export function t(key, params = {}) {
     const plural = new Intl.PluralRules(lang).select(params.count) === "one" ? "one" : "other";
     if (`${key}.${plural}` in (dictionaries[lang] || {})) k = `${key}.${plural}`;
   }
-  const text = dictionaries[lang]?.[k] ?? dictionaries.en?.[k] ?? key;
+  const text = dictionaries[lang]?.[k] ?? dictionaries.en?.[k] ?? String(key ?? "");
   return text.replace(/\{(\w+)\}/g, (_, name) => (name in params && params[name] !== null ? fmt(params[name]) : "—"));
 }
 

@@ -168,7 +168,7 @@ VODarr agit pour vous de ces façons ; chacune est délibérée.
 - **Téléchargement de `.torrent` depuis vos trackers.** Pour vérifier un candidat, VODarr
   télécharge son `.torrent` via Prowlarr — seulement les candidats filtrés, et il s'arrête au
   premier identique par tracker et par portée. Sur certains trackers privés, cela compte comme
-  un *snatch* : vérifiez d'abord leurs règles de hit-and-run. Les `.torrent` de référence restent
+  un *snatch* : vérifiez d'abord leurs règles de hit-and-run ; *Réglages › Prowlarr* permet de plafonner les vérifications par tracker. Les `.torrent` de référence restent
   dans `/config/torrents` (ils contiennent votre passkey) et ne sont jamais servis par l'API.
 - **Les fichiers téléchargés ne bougent jamais.** Ils ne sont ni déplacés, ni renommés, ni
   copiés ; la release reconstituée est faite de liens qui pointent vers eux.
@@ -270,8 +270,7 @@ VODARR_CONFIG=.dev-config VODARR_ALLOWED_HOSTS=localhost \
 ```
 
 Décisions de conception dans [`docs/adr/`](docs/adr/).
-L'interface est en HTML, CSS et modules JavaScript, sans étape de build ; la référence du design
-system est sur `#/design`. Les captures de ce README proviennent des faux services : titres,
+L'interface est en HTML, CSS et modules JavaScript, sans étape de build. Les captures de ce README proviennent des faux services : titres,
 trackers et fichiers y sont tous inventés.
 
 Les tickets et pull requests sont bienvenus. Gardez des données de test synthétiques et ne

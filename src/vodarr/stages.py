@@ -366,8 +366,12 @@ def stage_verify(ctx: Ctx) -> Msg:
         (release["id"],),
     )
     in_place = {r["id"] for r in rows if r["link_root"] or r["added_to_qbit"]}
+    # Each .torrent download may count as a snatch on a private tracker: optional cap per tracker.
+    cfg = (get_setting(conn, "services", {}) or {}).get("prowlarr") or {}
+    limit = cfg.get("maxChecksPerTracker") or 0
+    fetched: dict[str, int] = {}
     done = 0
-    for (_, scope), group in groups.items():
+    for (indexer, scope), group in groups.items():
         target = _local_size(scope, sizes)
         group.sort(key=lambda r: abs((r["size"] or 0) - target))
         found = any(r["id"] in in_place and r["status"] in IDENTICAL for r in group)
@@ -378,6 +382,10 @@ def stage_verify(ctx: Ctx) -> Msg:
             if found:
                 _candidate(conn, row["id"], "skipped", "verify.after_identical")
                 continue
+            if limit and fetched.get(indexer, 0) >= limit:
+                _candidate(conn, row["id"], "skipped", "verify.tracker_limit", {"limit": limit})
+                continue
+            fetched[indexer] = fetched.get(indexer, 0) + 1
             status = _verify_candidate(ctx, client, row, local)
             found = status in IDENTICAL
             ctx.progress(done, len(rows))

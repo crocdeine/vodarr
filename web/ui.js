@@ -121,6 +121,17 @@ export function emptyState(text) {
 
 
 
+/** A list poster; http(s) only (providers still serve some over http), placeholder otherwise. */
+export function poster(url) {
+  const placeholder = () => h("span", { class: "poster" });
+  return url && /^https?:\/\//.test(url)
+    ? h("img", {
+        class: "poster", src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
+        onerror: (e) => e.currentTarget.replaceWith(placeholder()),
+      })
+    : placeholder();
+}
+
 /** TMDB details for a title (0.1.1): null without a key or a match; never blocks the page. */
 export async function fetchMeta(kind, { tmdbId, title, year }) {
   const params = new URLSearchParams({ kind, lang: language() });

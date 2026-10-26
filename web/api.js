@@ -22,7 +22,12 @@ async function request(method, path, body) {
     init.headers["Content-Type"] = "application/json";
     init.body = JSON.stringify(body ?? {});
   }
-  const response = await fetch(`/api${path}`, init);
+  let response;
+  try {
+    response = await fetch(`/api${path}`, init);
+  } catch {
+    throw new ApiError(0, { code: "http.unreachable" }); // server stopped or network down
+  }
   const data = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) {
     const error = new ApiError(response.status, data?.error);

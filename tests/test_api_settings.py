@@ -298,3 +298,10 @@ def test_null_means_keep_never_a_500(client, body):
 def test_nul_byte_in_a_path_is_refused(client):
     r = put(client, {"paths": {"downloads": "/data/a\x00b"}})
     assert r.status_code == 422 and r.json()["error"]["code"] == "settings.path_missing"
+
+
+def test_tracker_check_limit_is_validated(client):
+    r = put(client, {"services": {"prowlarr": {"maxChecksPerTracker": 3}}})
+    assert r.status_code == 200
+    assert r.json()["services"]["prowlarr"]["maxChecksPerTracker"] == 3
+    assert put(client, {"services": {"prowlarr": {"maxChecksPerTracker": -1}}}).status_code == 422
