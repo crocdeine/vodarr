@@ -157,6 +157,9 @@ VODarr acts on your behalf in these ways; each one is deliberate.
   per tracker and scope. On some private trackers this counts as a *snatch*: check their
   hit-and-run rules first; *Settings › Prowlarr* can cap the checks per tracker. Reference `.torrent` files stay in `/config/torrents` (they contain
   your passkey) and are never served by the API.
+- **Daily new searches.** A release without a match is searched again once a day for 30 days
+  (*Settings › Prowlarr*, 0 = never), as releases often reach the trackers after the provider.
+  Only new results are checked; a `.torrent` is never downloaded twice.
 - **Downloaded files never move.** They are not moved, renamed or copied; the rebuilt release
   is made of links pointing to them.
 - **In-place NUL padding removal — the only change ever made to a downloaded file.** Some IPTV

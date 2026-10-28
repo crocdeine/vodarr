@@ -5,12 +5,13 @@ import contextlib
 import json
 import logging
 import sqlite3
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from vodarr import downloads
-from vodarr.core import Msg, MsgError
+from vodarr.core import Msg, MsgError, get_setting
 
 log = logging.getLogger(__name__)
 
@@ -138,6 +139,15 @@ def retry(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
     with locked(conn):
         ensure_idle(conn, release_id)
         _reset(conn, release_id, stage)
+        if STAGES.index(stage) <= STAGES.index("verify"):
+            # An explicit retry checks every candidate again (from the .torrent already saved:
+            # nothing is downloaded twice). Links and torrents in qBittorrent keep their verdict.
+            conn.execute(
+                "UPDATE candidates SET status = 'pending', problem_code = NULL,"
+                " problem_params = NULL, file_report = NULL"
+                " WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0",
+                (release_id,),
+            )
 
 
 def _reset(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
@@ -156,6 +166,56 @@ def _reset(conn: sqlite3.Connection, release_id: str, stage: str) -> None:
         # Done files are never downloaded again (they may be linked and seeding): with nothing
         # re-queued, the download stage is complete at once instead of waiting forever.
         downloads._update_download_stage(conn, release_id)
+
+
+DAY = 86400
+_last_tick = 0.0
+
+
+def research_tick(conn: sqlite3.Connection, now: float | None = None) -> bool:
+    """0.3: releases still without a match are searched again once a day for `researchDays`
+    days (Settings › Prowlarr, 0 = never): many releases reach the trackers after the provider.
+    Checked at most once a minute. True when a search was queued."""
+    global _last_tick
+    now = time.time() if now is None else now
+    if now - _last_tick < 60:
+        return False
+    _last_tick = now
+    cfg = (get_setting(conn, "services", {}) or {}).get("prowlarr") or {}
+    days = cfg.get("researchDays", 30)
+    if not days:
+        return False
+    queued = False
+    with locked(conn):
+        for row in conn.execute(
+            "SELECT id, next_search, research_until FROM releases"
+            " WHERE research_until IS NULL OR research_until > ? ORDER BY next_search, created_at",
+            (now,),
+        ).fetchall():
+            if status(conn, row["id"]) != "no_match":
+                continue
+            if row["research_until"] is None:  # first time without a match: start the clock
+                conn.execute(
+                    "UPDATE releases SET next_search = ?, research_until = ? WHERE id = ?",
+                    (int(now + DAY), int(now + days * DAY), row["id"]),
+                )
+            elif row["next_search"] <= now < row["research_until"]:
+                search_again(conn, row["id"], now)
+                queued = True
+                break  # one release per minute: trackers are not hit all at once
+    return queued
+
+
+def search_again(conn: sqlite3.Connection, release_id: str, now: float) -> None:
+    """New search keeping known verdicts: only new results are checked (call inside `locked`)."""
+    _reset(conn, release_id, "search")
+    # A tracker down on the day: candidates that failed are tried again ("different" stays).
+    conn.execute(
+        "UPDATE candidates SET status = 'pending', problem_code = NULL, problem_params = NULL"
+        " WHERE release_id = ? AND status = 'error'",
+        (release_id,),
+    )
+    conn.execute("UPDATE releases SET next_search = ? WHERE id = ?", (int(now + DAY), release_id))
 
 
 def status(conn: sqlite3.Connection, release_id: str) -> str:
@@ -193,7 +253,11 @@ def status(conn: sqlite3.Connection, release_id: str) -> str:
         " AND (link_root IS NOT NULL OR added_to_qbit = 1)",
         (release_id,),
     ).fetchone()
-    return "done" if seeded else "no_match"
+    # no_match only after a real search found nothing identical: a search or restore skipped for
+    # a setting (no Prowlarr, no link folder, no searchable title) is not something to search again.
+    searched = stage["search"]["state"] == "done"
+    nothing = stage["restore"]["msg_code"] == "restore.no_reference"
+    return "no_match" if not seeded and searched and nothing else "done"
 
 
 def handlers() -> dict[str, Handler]:

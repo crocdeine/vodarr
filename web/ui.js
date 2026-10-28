@@ -69,8 +69,12 @@ export function timeline(stages, onRetry) {
 }
 
 function retryButton(stage, onRetry) {
-  const label = t("releases.retry_from", { stage: t(`stage.${stage}`) });
-  return h("button", { class: "btn ghost icon", type: "button", title: label, "aria-label": label, onclick: () => onRetry(stage) }, icon("refresh"));
+  return iconButton(t("releases.retry_from", { stage: t(`stage.${stage}`) }), "refresh", () => onRetry(stage), { key: `retry:${stage}` });
+}
+
+/** An icon-only button with its accessible name; `key` keeps the focus across poll rebuilds. */
+export function iconButton(label, name, onclick, { key, small } = {}) {
+  return h("button", { class: `btn ghost icon${small ? " small" : ""}`, type: "button", title: label, "aria-label": label, onclick, "data-key": key }, icon(name));
 }
 
 export function alertBox(kind, title, text, ...actions) {
@@ -123,10 +127,11 @@ export function emptyState(text) {
 
 const brokenPosters = new Set(); // lists redraw every few seconds: don't retry a dead image
 
-/** A list poster; http(s) only (providers still serve some over http), placeholder otherwise. */
+/** A list poster: https only (an http cover from a provider could point at the LAN), else a
+ * placeholder. */
 export function poster(url) {
   const placeholder = () => h("span", { class: "poster" });
-  return url && /^https?:\/\//.test(url) && !brokenPosters.has(url)
+  return url && /^https:\/\//.test(url) && !brokenPosters.has(url)
     ? h("img", {
         class: "poster", src: url, alt: "", loading: "lazy", referrerpolicy: "no-referrer",
         onerror: (e) => { brokenPosters.add(url); e.currentTarget.replaceWith(placeholder()); },

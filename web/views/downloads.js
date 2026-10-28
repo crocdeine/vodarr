@@ -5,22 +5,23 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { icon } from "../icons.js";
 import { bytes, t } from "../i18n.js";
-import { button, emptyState, pill, progress, toastError } from "../ui.js";
+import { button, emptyState, iconButton, pill, progress, toastError } from "../ui.js";
 
 export function downloadsDrawer() {
   let last = "";
-  const summary = h("small", { class: "muted num" });
+  const summary = h("small", { class: "muted num", "aria-live": "polite" }); // not the whole list
   const bar = h("div");
   const card = h("button", { class: "card nav", type: "button", onclick: () => open(true), "aria-haspopup": "dialog" },
     icon("down"), h("span", { class: "grow stack" }, h("b", {}, t("downloads.title")), summary, bar));
-  const list = h("div", { class: "drawer-b", "aria-live": "polite" });
+  const list = h("div", { class: "drawer-b" });
   const panel = h("aside", { class: "drawer", role: "dialog", "aria-label": t("downloads.title"), dataset: { open: "false" } },
     h("div", { class: "drawer-h" }, h("h2", { class: "heading" }, t("downloads.title")),
       h("div", { class: "inline" },
         button(t("downloads.clear"), () => act(() => api.post("/downloads/clear-finished")), { small: true }),
         h("button", { class: "btn icon", type: "button", "aria-label": t("common.close"), onclick: () => open(false) }, icon("x")))),
     list);
-  panel.addEventListener("keydown", (e) => e.key === "Escape" && open(false));
+  // On the document: a rebuild can drop the focus out of the panel.
+  document.addEventListener("keydown", (e) => e.key === "Escape" && panel.dataset.open === "true" && open(false));
 
   function open(yes) {
     panel.dataset.open = String(yes);
@@ -65,14 +66,10 @@ export function downloadsDrawer() {
             : d.done ? bytes(d.done) : "", // queued: size not known yet
           running && d.rate > 0 && ` · ${t("downloads.rate", { rate: bytes(d.rate) })}`),
         pill(d.status),
-        ["queued", "running"].includes(d.status) && iconButton(t("downloads.cancel"), "x", () => api.post(`/downloads/${d.id}/cancel`)),
-        ["cancelled", "error"].includes(d.status) && iconButton(t("downloads.remove"), "trash", () => api.del(`/downloads/${d.id}`))),
+        ["queued", "running"].includes(d.status) && iconButton(t("downloads.cancel"), "x", () => act(() => api.post(`/downloads/${d.id}/cancel`)), { key: `cancel:${d.id}`, small: true }),
+        ["cancelled", "error"].includes(d.status) && iconButton(t("downloads.remove"), "trash", () => act(() => api.del(`/downloads/${d.id}`)), { key: `remove:${d.id}`, small: true })),
       running && progress(d.done, d.total),
       d.error && h("small", { class: "error-text" }, t(d.error, d.errorParams || {})));
-  }
-
-  function iconButton(label, name, fn) {
-    return h("button", { class: "btn ghost icon small", type: "button", "aria-label": label, title: label, onclick: () => act(fn) }, icon(name));
   }
 
   function groups(data) {

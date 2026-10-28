@@ -4,8 +4,8 @@
 
 import { api } from "../api.js";
 import { h, replace } from "../dom.js";
-import { bytes, language, t, tm } from "../i18n.js";
-import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, metaPanel, poster, pill, progress, select, timeline, toast, toastError } from "../ui.js";
+import { bytes, date, language, t, tm } from "../i18n.js";
+import { alertBox, button, card, confirmDialog, emptyState, fetchMeta, iconButton, metaPanel, poster, pill, progress, select, timeline, toast, toastError } from "../ui.js";
 
 const FILTERS = [
   ["all", null],
@@ -16,6 +16,7 @@ const FILTERS = [
   ["error", ["error"]],
 ];
 const PAGE = 50;
+const keyed = (el, key) => { el.dataset.key = key; return el; };
 const TABS = ["overview", "download", "identification", "crossseed"];
 
 // Technical metadata read by ffprobe after download (0.1.1).
@@ -45,7 +46,13 @@ function audioLine(media) {
 
 function techFacts(media) {
   if (!media) return [];
-  const subs = (media.subtitles || []).map(languageName).filter(Boolean);
+  // Strings before 0.3, {language, forced} since; identical labels are counted, not repeated.
+  const labels = (media.subtitles || []).map((s) => {
+    const name = languageName(typeof s === "string" ? s : s?.language);
+    return name && (s?.forced ? t("releases.tech.forced", { language: name }) : name);
+  }).filter(Boolean);
+  const counts = labels.reduce((m, l) => m.set(l, (m.get(l) || 0) + 1), new Map());
+  const subs = [...counts].map(([label, n]) => (n > 1 ? `${label} ×${n}` : label));
   return [
     [t("releases.tech.video"), videoLine(media)],
     [t("releases.tech.audio"), audioLine(media)],
@@ -66,7 +73,7 @@ export function releasesView(main, releaseId, ctx) {
     return true;
   }
   const filterRoot = h("div");
-  const rows = h("div", { class: "rows", "aria-live": "polite" });
+  const rows = h("div", { class: "rows" });
   const pager = h("div", { class: "pager" });
   const listPane = h("section", { class: "pane list" },
     h("header", { class: "pane-head toolbar" }, h("h1", { class: "title" }, t("releases.title")), filterRoot), rows, pager);
@@ -88,6 +95,7 @@ export function releasesView(main, releaseId, ctx) {
 
   // Releases queued before 0.1.3 have no catalogue poster: TMDB's, looked up once per release.
   const tmdbCovers = new Map();
+  let redrawQueued = false; // many covers resolve at once: one redraw
   function coverOf(r) {
     if (r.cover) return r.cover;
     if (!tmdbCovers.has(r.id)) {
@@ -95,7 +103,7 @@ export function releasesView(main, releaseId, ctx) {
       fetchMeta(r.kind, { tmdbId: r.tmdbId, title: r.title, year: r.year }).then((meta) => {
         if (!meta?.poster) return;
         tmdbCovers.set(r.id, meta.poster);
-        drawList();
+        if (!redrawQueued) { redrawQueued = true; requestAnimationFrame(() => { redrawQueued = false; drawList(); }); }
       });
     }
     return tmdbCovers.get(r.id);
@@ -121,9 +129,9 @@ export function releasesView(main, releaseId, ctx) {
       state.items = page.data;
       if (changed("list", page.data)) drawList();
       if (changed("pager", page.pagination)) replace(pager, totalPages > 1 && [
-        button(t("common.previous"), () => { state.page -= 1; loadList(); }, { small: true, disabled: n <= 1 }),
+        keyed(button(t("common.previous"), () => { state.page -= 1; loadList(); }, { small: true, disabled: n <= 1 }), "prev"),
         h("span", { class: "num" }, t("common.page", { page: n, pages: totalPages })),
-        button(t("common.next"), () => { state.page += 1; loadList(); }, { small: true, disabled: n >= totalPages })]);
+        keyed(button(t("common.next"), () => { state.page += 1; loadList(); }, { small: true, disabled: n >= totalPages }), "next")]);
     } catch (error) {
       replace(rows, emptyState(t(error.code, error.params)));
     }
@@ -167,11 +175,24 @@ export function releasesView(main, releaseId, ctx) {
     });
   }
 
+  // 0.3: nothing identical yet; VODarr searches again daily for a while.
+  function noMatchAlert(detail) {
+    const now = Date.now() / 1000;
+    const text = detail.nextSearch && detail.researchUntil && detail.nextSearch < detail.researchUntil
+      ? t("releases.no_match.next", { date: date(detail.nextSearch), until: date(detail.researchUntil) })
+      : detail.researchUntil && detail.researchUntil <= now
+        ? t("releases.no_match.over")
+        : t("releases.no_match.text");
+    return alertBox("info", t("releases.no_match.title"), text,
+      button(t("releases.search_now"), () => act(() => api.post(`/releases/${detail.id}/research`), t("releases.search_queued")), { small: true, iconName: "search" }));
+  }
+
   function overview(detail) {
     const failed = detail.stages.find((s) => s.state === "error");
     return [
       state.meta?.id === detail.id && metaPanel(state.meta.data),
       ...partialAlerts(detail),
+      detail.status === "no_match" && noMatchAlert(detail),
       failed && alertBox("error", t(`stage.${failed.name}`), tm(failed.message),
         button(t("releases.retry_from", { stage: t(`stage.${failed.name}`) }), () => retry(failed.name), { small: true })),
       card(t("releases.timeline"), timeline(detail.stages, retry)),
@@ -250,10 +271,9 @@ export function releasesView(main, releaseId, ctx) {
         h("div", { class: "crumb inline" }, detail.kind === "movie" ? t("releases.scope.movie") : t("explorer.season", { season: detail.season }),
           h("a", { href: `#/explorer/${detail.sourceId}/${detail.kind}/${encodeURIComponent(detail.itemId)}` }, t("releases.open_in_explorer"))),
         h("div", { class: "inline" }, h("h2", { class: "title grow" }, detail.title), pill(detail.status),
-          button("", () => remove(detail), { kind: "icon", iconName: "trash" })),
+          iconButton(t("releases.delete"), "trash", () => remove(detail))),
         tabs),
       h("div", { class: "content", role: "tabpanel" }, TAB_VIEW[state.tab](detail)));
-    detailPane.querySelector(".btn.icon").setAttribute("aria-label", t("releases.delete"));
   }
 
   async function loadDetail() {

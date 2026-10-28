@@ -42,11 +42,12 @@ STATUS = {
     "auth.locked": 429,
     "auth.already_setup": 409,
     "release.busy": 409,
+    "release.search_too_soon": 429,
     "queue.not_removable": 409,
 }
 SECURITY_HEADERS = {
     "Content-Security-Policy": (
-        "default-src 'self'; img-src 'self' https: http: data:; base-uri 'none';"
+        "default-src 'self'; img-src 'self' https: data:; base-uri 'none';"
         " form-action 'self'; frame-ancestors 'none'"
     ),
     "X-Content-Type-Options": "nosniff",
@@ -153,6 +154,7 @@ class ProwlarrIn(ApiModel):
     url: str | None = Text
     api_key: str | None = Text
     max_checks_per_tracker: int | None = Field(None, ge=0, le=100)
+    research_days: int | None = Field(None, ge=0, le=365)
 
 
 class QbitIn(ApiModel):
@@ -280,7 +282,10 @@ def create_app(
                 _worker("download", download_step, config_dir, stop, wake["downloads"]),
                 _worker(
                     "pipeline",
-                    lambda c: pipeline.process_next(c, config_dir, stage_handlers),
+                    lambda c: (
+                        pipeline.research_tick(c)
+                        or pipeline.process_next(c, config_dir, stage_handlers)
+                    ),
                     config_dir,
                     stop,
                     wake["pipeline"],

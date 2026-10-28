@@ -99,7 +99,7 @@ def test_security_headers_and_docs_disabled(client):
     r = client.get("/api/health")
     csp = r.headers["content-security-policy"]
     assert (
-        csp.startswith("default-src 'self'; img-src 'self' https: http: data:")
+        csp.startswith("default-src 'self'; img-src 'self' https: data:")
         and "base-uri 'none'" in csp
     )
     assert r.headers["x-frame-options"] == "DENY"

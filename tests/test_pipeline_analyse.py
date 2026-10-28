@@ -91,6 +91,12 @@ FFPROBE_REAL = {
         {"codec_type": "audio", "codec_name": "eac3", "channels": 6, "tags": {"language": "fre"}},
         {"codec_type": "audio", "codec_name": "aac", "channels": 2, "tags": {"language": "eng"}},
         {"codec_type": "subtitle", "codec_name": "subrip", "tags": {"language": "fre"}},
+        {
+            "codec_type": "subtitle",
+            "codec_name": "subrip",
+            "tags": {"language": "fre"},
+            "disposition": {"forced": 1},
+        },
     ],
 }
 
@@ -114,7 +120,11 @@ def test_technical_metadata_stored(conn, tmp_path, make_season, season_data, mon
         {"codec": "eac3", "channels": 6, "language": "fre"},
         {"codec": "aac", "channels": 2, "language": "eng"},
     ]
-    assert info["subtitles"] == ["fre"] and info["duration"] == 2712.45
+    assert info["subtitles"] == [
+        {"language": "fre", "forced": False},
+        {"language": "fre", "forced": True},  # forced: "français (forcés)", not "français" twice
+    ]
+    assert info["duration"] == 2712.45
 
 
 def test_garbage_ffprobe_output_is_tolerated(conn, tmp_path, make_season, season_data, monkeypatch):

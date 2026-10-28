@@ -322,3 +322,55 @@ def test_catalogue_shows_titles_already_queued(env):
     assert [x["season"] for x in detail["releases"]] == [1]
     release = c.get(f"/api/releases/{rid}").json()
     assert (release["sourceId"], release["kind"], release["itemId"]) == (sid, "series", "100")
+
+
+def test_search_now_keeps_known_verdicts(env):
+    """0.3: "Search now" queues a new search without checking known candidates again."""
+    c, xt, prowl, qbit, tmp_path = env
+    sid = add_source(c, xt)["id"]
+    xt.files.update({"1101": random_bytes(40_000, 1), "1102": random_bytes(35_000, 2)})
+    r = c.post(
+        "/api/releases",
+        headers=H,
+        json={
+            "sourceId": sid,
+            "kind": "series",
+            "itemId": "100",
+            "season": 1,
+            "episodes": ["1101", "1102"],
+        },
+    )
+    rid = r.json()["id"]
+    drain(tmp_path)
+    assert c.get(f"/api/releases/{rid}").json()["status"] == "no_match"
+    assert c.post(f"/api/releases/{rid}/research", headers=H, json={}).status_code == 200
+    detail = c.get(f"/api/releases/{rid}").json()
+    assert detail["nextSearch"] is not None
+    assert {s["name"]: s["state"] for s in detail["stages"]}["search"] == "pending"
+    drain(tmp_path)
+    assert c.get(f"/api/releases/{rid}").json()["status"] == "no_match"
+    again = c.post(f"/api/releases/{rid}/research", headers=H, json={})
+    assert again.status_code == 429  # each search may fetch .torrent files: throttled
+
+
+def test_same_title_from_another_entry_is_flagged(env):
+    """Real test: "NF - Lupin" did not say the series was already downloaded from "FR - Lupin"."""
+    c, xt, *_ = env
+    sid = add_source(c, xt)["id"]
+    xt.series_info["101"] = {
+        **xt.series_info["100"],
+        "info": {**xt.series_info["100"]["info"], "name": "NF - Northwind Precinct"},
+    }
+    r = c.post(
+        "/api/releases",
+        headers=H,
+        json={"sourceId": sid, "kind": "series", "itemId": "100", "season": 1},
+    )
+    other = c.get(f"/api/sources/{sid}/series/101").json()
+    assert [(e["id"], e["season"]) for e in other["elsewhere"]] == [(r.json()["id"], 1)]
+    assert other["releases"] == []
+    assert c.get(f"/api/sources/{sid}/series/100").json()["elsewhere"] == []
+    remake = {**xt.series_info["101"]["info"], "releaseDate": "1999-01-01"}
+    xt.series_info["101"] = {**xt.series_info["101"], "info": remake}
+    c.post(f"/api/sources/{sid}/refresh", headers=H, json={})
+    assert c.get(f"/api/sources/{sid}/series/101").json()["elsewhere"] == []  # another year

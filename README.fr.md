@@ -170,6 +170,10 @@ VODarr agit pour vous de ces façons ; chacune est délibérée.
   premier identique par tracker et par portée. Sur certains trackers privés, cela compte comme
   un *snatch* : vérifiez d'abord leurs règles de hit-and-run ; *Réglages › Prowlarr* permet de plafonner les vérifications par tracker. Les `.torrent` de référence restent
   dans `/config/torrents` (ils contiennent votre passkey) et ne sont jamais servis par l'API.
+- **Nouvelles recherches quotidiennes.** Une release sans correspondance est recherchée à nouveau
+  une fois par jour pendant 30 jours (*Réglages › Prowlarr*, 0 = jamais), car les releases
+  arrivent souvent sur les trackers après le fournisseur. Seuls les nouveaux résultats sont
+  vérifiés ; un `.torrent` n'est jamais téléchargé deux fois.
 - **Les fichiers téléchargés ne bougent jamais.** Ils ne sont ni déplacés, ni renommés, ni
   copiés ; la release reconstituée est faite de liens qui pointent vers eux.
 - **Retrait sur place du bourrage NUL — la seule modification jamais apportée à un fichier

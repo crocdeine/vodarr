@@ -870,31 +870,6 @@ dialog::backdrop {
   display: contents;
 }
 
-.swatch {
-  display: block;
-  width: var(--s-10);
-  height: var(--s-10);
-  border-radius: var(--r-sm);
-  box-shadow: var(--shadow-sm);
-}
-
-.sw-bg { background: var(--bg); }
-.sw-surface { background: var(--surface); }
-.sw-surface-2 { background: var(--surface-2); }
-.sw-text { background: var(--text); }
-.sw-text-2 { background: var(--text-2); }
-.sw-text-3 { background: var(--text-3); }
-.sw-accent { background: var(--accent); }
-.sw-ok { background: var(--ok); }
-.sw-running { background: var(--running); }
-.sw-action { background: var(--action); }
-.sw-error { background: var(--error); }
-.sw-skipped { background: var(--skipped); }
-
-.swatches {
-  gap: var(--s-4);
-}
-
 .split {
   display: grid;
   grid-template-columns: var(--list-w) 1fr;

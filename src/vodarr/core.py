@@ -82,6 +82,11 @@ MIGRATIONS = [
     """
     ALTER TABLE releases ADD COLUMN cover TEXT;
     """,
+    # 0.3: automatic new searches for releases without a match.
+    """
+    ALTER TABLE releases ADD COLUMN next_search INTEGER;
+    ALTER TABLE releases ADD COLUMN research_until INTEGER;
+    """,
 ]
 
 
@@ -203,7 +208,7 @@ class Msg:
 class MsgError(Exception):
     """An error carrying a translatable message."""
 
-    def __init__(self, code: str, **params: Any):
+    def __init__(self, code: str, /, **params: Any):
         super().__init__(code)
         self.msg = Msg(code, **params)
 

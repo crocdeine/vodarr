@@ -266,3 +266,98 @@ def test_checks_per_tracker_can_be_capped(
     assert statuses.count(("different", None)) == 2
     assert statuses.count(("skipped", "verify.tracker_limit")) == 1
     assert len(list((tmp_path / "config" / "torrents").iterdir())) == 2
+
+
+def test_new_search_only_checks_new_results(
+    conn, tmp_path, make_season, season_data, prowl, monkeypatch
+):
+    """0.3: a daily search keeps known verdicts and never downloads a .torrent twice."""
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
+    other = [random_bytes(len(d), 70 + i) for i, d in enumerate(season_data)]
+    total = sum(map(len, season_data))
+    old = "Northwind.Precinct.S01.1080p.WEB-DL-OLD"
+    rid, ctx, _ = setup(
+        conn,
+        tmp_path,
+        make_season,
+        season_data,
+        prowl,
+        [("Nimbus", old, total, pack_torrent(other, old))],
+    )
+    stages.stage_verify(ctx)
+    assert prowl.downloaded() == ["t0"]
+    prowl.add("Nimbus", PACK, total, torrent_id="t1")  # the matching release appears later
+    prowl.torrents["t1"] = pack_torrent(season_data)
+    stages.stage_search(ctx)
+    stages.stage_verify(ctx)
+    assert prowl.downloaded() == ["t0", "t1"]  # the old one is not fetched again
+    assert [(t, s) for _, t, s, _ in cands(conn, rid)] == [(old, "different"), (PACK, "identical")]
+
+
+def test_explicit_retry_reuses_saved_torrents(
+    conn, tmp_path, make_season, season_data, prowl, monkeypatch
+):
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
+    total = sum(map(len, season_data))
+    rid, ctx, _ = setup(
+        conn,
+        tmp_path,
+        make_season,
+        season_data,
+        prowl,
+        [("Nimbus", PACK, total, pack_torrent(season_data))],
+    )
+    conn.execute("UPDATE stages SET state = 'done' WHERE release_id = ?", (rid,))
+    stages.stage_verify(ctx)
+    pipeline.retry(conn, rid, "verify")  # checks again, from the saved file
+    assert [s for _, _, s, _ in cands(conn, rid)] == ["pending"]
+    stages.stage_verify(ctx)
+    assert [s for _, _, s, _ in cands(conn, rid)] == ["identical"]
+    assert prowl.downloaded() == ["t0"]
+
+
+def test_added_episodes_reclassify_known_results(
+    conn, tmp_path, make_season, season_data, prowl, monkeypatch
+):
+    """Backend audit: a pack too big for 2 episodes became a candidate once all 3 were queued."""
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
+    total = sum(map(len, season_data))
+    rid, ctx, _ = setup(
+        conn,
+        tmp_path,
+        make_season,
+        season_data[:2],
+        prowl,
+        [("Nimbus", PACK, total, pack_torrent(season_data))],
+    )
+    assert [r["is_candidate"] for r in conn.execute("SELECT is_candidate FROM candidates")] == [0]
+    # the third episode arrives (as an enqueue with new files would leave it)
+    path = tmp_path / conn.execute("SELECT dir FROM releases").fetchone()[0]
+    conn.execute(
+        "INSERT INTO files (release_id, stream_id, ext, season, episode, filename, size, dl_status,"
+        " queued_at) VALUES (?, '3', 'mkv', 1, 3, 'e3.mkv', ?, 'done', 2)",
+        (rid, len(season_data[2])),
+    )
+    (path / "e3.mkv").write_bytes(season_data[2])
+    for i, f in enumerate(conn.execute("SELECT id FROM files ORDER BY id").fetchall()):
+        conn.execute("UPDATE files SET size = ? WHERE id = ?", (len(season_data[i]), f["id"]))
+    stages.stage_search(ctx)
+    assert [r["is_candidate"] for r in conn.execute("SELECT is_candidate FROM candidates")] == [1]
+    assert len(cands(conn, rid)) == 1  # updated, not added twice
+
+
+def test_daily_search_retries_failed_candidates(
+    conn, tmp_path, make_season, season_data, prowl, monkeypatch
+):
+    """Backend audit: a tracker down on the first day left the candidate in error for 30 days."""
+    monkeypatch.setattr(stages, "ffprobe_json", lambda p: "{}")
+    total = sum(map(len, season_data))
+    rid, ctx, _ = setup(
+        conn, tmp_path, make_season, season_data, prowl, [("Nimbus", PACK, total, None)]
+    )
+    stages.stage_verify(ctx)  # no .torrent behind the result: error
+    assert [s for _, _, s, _ in cands(conn, rid)] == ["error"]
+    prowl.torrents["t0"] = pack_torrent(season_data)  # the tracker is back
+    pipeline.search_again(conn, rid, 1_000_000.0)
+    stages.stage_verify(ctx)
+    assert [s for _, _, s, _ in cands(conn, rid)] == ["identical"]

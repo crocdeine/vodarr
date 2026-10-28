@@ -36,7 +36,7 @@ def ffprobe_json(path: Path) -> str:
             "-show_entries",
             "format=duration,bit_rate,format_name:format_tags=title"
             ":stream=codec_type,codec_name,profile,width,height,channels,r_frame_rate,"
-            "color_transfer:stream_tags=title,language",
+            "color_transfer:stream_tags=title,language:stream_disposition=forced",
             "-of",
             "json",
             str(path),
@@ -106,7 +106,11 @@ def media_info(fmt: dict, streams: list[dict]) -> dict | None:
             for st in streams
             if st.get("codec_type") == "audio"
         ],
-        "subtitles": [lang(st) for st in streams if st.get("codec_type") == "subtitle"],
+        "subtitles": [
+            {"language": lang(st), "forced": bool((st.get("disposition") or {}).get("forced"))}
+            for st in streams
+            if st.get("codec_type") == "subtitle"
+        ],
     }
 
 
@@ -290,25 +294,29 @@ def stage_search(ctx: Ctx) -> Msg:
     kept = 0
     trackers = set()
     with locked(ctx.conn):
-        # References already linked or added to qBittorrent stay: deletion needs them.
-        stale = "WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0"
-        for (path,) in ctx.conn.execute(
-            f"SELECT torrent_path FROM candidates {stale} AND torrent_path IS NOT NULL",  # noqa: S608
-            (release["id"],),
-        ).fetchall():  # their .torrent files may carry a passkey: not left behind
-            with contextlib.suppress(MsgError, OSError):
-                _remove_tree(Path(path), [ctx.config_dir / "torrents"])
-        ctx.conn.execute(f"DELETE FROM candidates {stale}", (release["id"],))  # noqa: S608
-        known = set()
+        # Known candidates stay with their verdict (0.3): a new search only adds what is new, so
+        # a daily search never downloads the same .torrent twice. They go with the release.
+        known: dict = {}
         for c in ctx.conn.execute(
-            "SELECT download_url, indexer, title, size FROM candidates WHERE release_id = ?",
+            "SELECT id, download_url, indexer, title, size, link_root, added_to_qbit"
+            " FROM candidates WHERE release_id = ?",
             (release["id"],),
         ):
-            known |= {c[0], _same_torrent(c[1], c[2], c[3])}
+            for key in (c["download_url"], _same_torrent(c["indexer"], c["title"], c["size"])):
+                known[key] = c
         for r in results:
             found = classify_result(r, release, sizes, titles, years)
             same = _same_torrent(r.get("indexer"), r.get("title"), r.get("size"))
-            if not found or r["downloadUrl"] in known or same in known:
+            old = known.get(r["downloadUrl"]) or known.get(same)
+            if old is not None:
+                # Files may have been added since: scope and candidacy follow the local set.
+                if found and not old["link_root"] and not old["added_to_qbit"]:
+                    ctx.conn.execute(
+                        "UPDATE candidates SET scope = ?, is_candidate = ? WHERE id = ?",
+                        (found[0], int(found[1]), old["id"]),
+                    )
+                continue
+            if not found:
                 continue
             scope, is_candidate = found
             _insert_candidate(ctx.conn, release["id"], r, scope, is_candidate)
@@ -369,33 +377,31 @@ def stage_verify(ctx: Ctx) -> Msg:
     groups: dict[tuple[str, str], list[sqlite3.Row]] = {}
     for row in rows:
         groups.setdefault((row["indexer"], row["scope"]), []).append(row)
-    conn.execute(
-        "UPDATE candidates SET status = 'pending', problem_code = NULL, problem_params = NULL,"
-        " file_report = NULL"
-        " WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0",
-        (release["id"],),
-    )
-    in_place = {r["id"] for r in rows if r["link_root"] or r["added_to_qbit"]}
-    # Each .torrent download may count as a snatch on a private tracker: optional cap per tracker.
+    # Each .torrent download may count as a snatch on a private tracker: optional cap per tracker,
+    # counting every .torrent ever downloaded for this release (searches repeat for 30 days).
     cfg = (get_setting(conn, "services", {}) or {}).get("prowlarr") or {}
     limit = cfg.get("maxChecksPerTracker") or 0
     fetched: dict[str, int] = {}
+    for row in rows:
+        if _has_torrent(row):
+            fetched[row["indexer"]] = fetched.get(row["indexer"], 0) + 1
     done = 0
     for (indexer, scope), group in groups.items():
         target = _local_size(scope, sizes)
         group.sort(key=lambda r: abs((r["size"] or 0) - target))
-        found = any(r["id"] in in_place and r["status"] in IDENTICAL for r in group)
+        found = any(r["status"] in IDENTICAL for r in group)
         for row in group:
             done += 1
-            if row["id"] in in_place:
+            if row["status"] != "pending":  # verdict already known (only new results are checked)
                 continue
             if found:
                 _candidate(conn, row["id"], "skipped", "verify.after_identical")
                 continue
-            if limit and fetched.get(indexer, 0) >= limit:
-                _candidate(conn, row["id"], "skipped", "verify.tracker_limit", {"limit": limit})
-                continue
-            fetched[indexer] = fetched.get(indexer, 0) + 1
+            if not _has_torrent(row):
+                if limit and fetched.get(indexer, 0) >= limit:
+                    _candidate(conn, row["id"], "skipped", "verify.tracker_limit", {"limit": limit})
+                    continue
+                fetched[indexer] = fetched.get(indexer, 0) + 1
             status = _verify_candidate(ctx, client, row, local)
             found = status in IDENTICAL
             ctx.progress(done, len(rows))
@@ -426,12 +432,20 @@ def _candidate(
     )
 
 
+def _has_torrent(row: sqlite3.Row) -> bool:
+    return bool(row["torrent_path"]) and Path(row["torrent_path"]).is_file()
+
+
 def _verify_candidate(ctx: Ctx, client, row: sqlite3.Row, local: list[Path]) -> str:
     path = ctx.config_dir / "torrents" / f"{ctx.release['id']}-{row['id']}.torrent"
     try:
-        data = client.fetch_torrent(row["download_url"])
-        t = torrent.load_torrent(data)
-        atomic_write(path, data)
+        if _has_torrent(row):  # verified before: read it again, never download it twice
+            data = Path(row["torrent_path"]).read_bytes()
+            t = torrent.load_torrent(data)
+        else:
+            data = client.fetch_torrent(row["download_url"])
+            t = torrent.load_torrent(data)
+            atomic_write(path, data)
         report, verdict = torrent.verify(t, torrent.match(t.files, local))
     except MsgError as e:
         if e.msg.code == "verify.rate_limited":

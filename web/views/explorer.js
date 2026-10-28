@@ -5,9 +5,15 @@ import { api } from "../api.js";
 import { h, replace } from "../dom.js";
 import { icon } from "../icons.js";
 import { t } from "../i18n.js";
-import { button, card, emptyState, fetchMeta, input, metaPanel, pill, poster, segmented, select, toast, toastError } from "../ui.js";
+import { alertBox, button, card, emptyState, fetchMeta, input, metaPanel, pill, poster, segmented, select, toast, toastError } from "../ui.js";
 
 const PAGE = 50;
+
+/** "FR - Lupin (2021) (FR)" → "Lupin": provider tags, year and suffixes removed. */
+function bareTitle(name) {
+  return name.replace(/^\s*(?:[┃|│[(][^┃|│\])]{1,12}[┃|│\])]\s*|[A-Z0-9+-]{2,8}\s*[-–|•]\s+)+/, "")
+    .replace(/(\s*\([^)]*\))+\s*$/, "").trim() || name;
+}
 
 export function explorerView(main, arg, ctx) {
   // #/explorer/<source>[/<kind>/<item>]: a release links back to the exact catalogue entry.
@@ -32,7 +38,7 @@ export function explorerView(main, arg, ctx) {
   sourceSelect.addEventListener("change", () => ctx.navigate(`#/explorer/${sourceSelect.value}`));
   const kindRoot = h("div");
   const categoryRoot = h("div");
-  const rows = h("div", { class: "rows", "aria-live": "polite" });
+  const rows = h("div", { class: "rows" });
   const pager = h("div", { class: "pager" });
 
   replace(listPane, h("header", { class: "pane-head toolbar" }, h("h1", { class: "title" }, t("explorer.title")),
@@ -59,13 +65,20 @@ export function explorerView(main, arg, ctx) {
     }
   }
 
-  async function loadItems() {
+  let itemsSeq = 0;
+
+  /** `quiet`: a background refresh (after queueing) keeps the list and its scroll position. */
+  async function loadItems({ quiet = false } = {}) {
     const params = new URLSearchParams({ kind: state.kind, page: state.page, pageSize: PAGE, q: state.q });
     if (state.category) params.set("category", state.category);
-    replace(rows, h("div", { class: "empty" }, t("common.loading")));
+    const seq = ++itemsSeq;
+    const scroll = rows.scrollTop;
+    if (!quiet) replace(rows, h("div", { class: "empty" }, t("common.loading")));
     try {
       const page = await api.get(`/sources/${state.source.id}/items?${params}`);
+      if (seq !== itemsSeq) return; // a newer search or page answered first
       replace(rows, page.data.length ? page.data.map(itemRow) : emptyState(t("explorer.empty")));
+      if (quiet) rows.scrollTop = scroll;
       const { page: n, totalPages } = page.pagination;
       replace(pager,
         button(t("common.previous"), () => { state.page -= 1; loadItems(); }, { small: true, disabled: n <= 1 }),
@@ -100,20 +113,38 @@ export function explorerView(main, arg, ctx) {
     return release && h("a", { class: "btn small", href: `#/releases/${release.id}` }, pill(release.status), t("explorer.open_release"));
   }
 
-  async function loadDetail() {
+  async function loadDetail({ quiet = false } = {}) {
     const item = state.item;
-    replace(detailPane, h("div", { class: "content" }, emptyState(t("common.loading"))));
+    const scroll = detailPane.scrollTop;
+    if (!quiet) replace(detailPane, h("div", { class: "content" }, emptyState(t("common.loading"))));
     try {
       const path = state.kind === "series" ? "series" : "movies";
       const detail = await api.get(`/sources/${state.source.id}/${path}/${encodeURIComponent(item.id)}`);
       if (state.item !== item) return; // another title was picked meanwhile: its answer wins
       replace(detailPane, state.kind === "series" ? seriesDetail(item, detail) : movieDetail(item, detail));
+      if (quiet) detailPane.scrollTop = scroll;
+      if (item.fromLink && !state.q) {
+        // Opened from a release: list the entries of this title (all providers) on the left.
+        item.fromLink = false;
+        search.value = state.q = bareTitle(detail.name || "");
+        state.page = 1;
+        loadItems();
+      }
       const meta = await fetchMeta(state.kind, { tmdbId: detail.tmdbId, title: detail.name || item.name, year: detail.year || item.year });
       if (meta && state.item === item) detailPane.querySelector(".content")?.prepend(metaPanel(meta));
+      if (quiet) detailPane.scrollTop = scroll; // the TMDB card above changes the height again
     } catch (error) {
       if (state.item !== item) return;
       replace(detailPane, h("div", { class: "content" }, emptyState(t(error.code, error.params))));
     }
+  }
+
+  /** Same title already downloaded from another catalogue entry (another provider). */
+  function elsewhereAlert(detail) {
+    if (!detail.elsewhere?.length) return null;
+    return alertBox("info", t("explorer.elsewhere.title"), t("explorer.elsewhere.text"),
+      ...detail.elsewhere.map((r) => h("a", { class: "btn small", href: `#/releases/${r.id}` }, pill(r.status),
+        r.season == null ? r.title : `${r.title} · S${r.season}`)));
   }
 
   function header(item, detail) {
@@ -127,14 +158,38 @@ export function explorerView(main, arg, ctx) {
       await api.post("/releases", { sourceId: state.source.id, itemId: item.id, ...body });
       toast(t("explorer.queued"));
       ctx.drawer?.refresh();
-      if (state.item === item) loadDetail(); // show the new release on its season
+      if (state.item === item) loadDetail({ quiet: true }); // show the new release on its season
+      loadItems({ quiet: true }); // and its badge in the list
     } catch (error) {
       toastError(error);
     }
   }
 
+  // 0.3: every season not queued yet, one release each (queued one after the other).
+  async function queueAll(item, seasons, el) {
+    el.disabled = true;
+    let n = 0;
+    try {
+      for (const season of seasons) {
+        await api.post("/releases", { sourceId: state.source.id, itemId: item.id, kind: "series", season });
+        n += 1;
+      }
+      toast(t("explorer.queued_seasons", { count: n }));
+    } catch (error) {
+      if (n) toast(t("explorer.queued_seasons", { count: n })); // the ones before the error are queued
+      toastError(error);
+    }
+    ctx.drawer?.refresh();
+    if (state.item === item) loadDetail({ quiet: true });
+    loadItems({ quiet: true });
+  }
+
   function seriesDetail(item, detail) {
-    return h("div", {}, header(item, detail), h("div", { class: "content" }, detail.seasons.map((season) => {
+    const made = new Set((detail.releases || []).map((r) => r.season));
+    const missing = detail.seasons.map((s) => s.season).filter((s) => !made.has(s));
+    const all = missing.length > 1 && h("div", { class: "inline" },
+      button(t("explorer.download_all", { count: missing.length }), (e) => queueAll(item, missing, e.currentTarget), { iconName: "down" }));
+    return h("div", {}, header(item, detail), h("div", { class: "content" }, elsewhereAlert(detail), all, detail.seasons.map((season) => {
       const boxes = [];
       const selectionButton = button("", () => queue(item, { kind: "series", season: season.season, episodes: boxes.filter((b) => b.checked).map((b) => b.value) }), { disabled: true });
       const update = () => {
@@ -147,7 +202,7 @@ export function explorerView(main, arg, ctx) {
       return card(t("explorer.season", { season: season.season }),
         h("div", { class: "card-b inline" }, h("span", { class: "muted" }, t("explorer.episodes", { count: season.episodes.length })),
           h("span", { class: "grow" }), releaseLink(made),
-          button(t("explorer.download_season"), () => queue(item, { kind: "series", season: season.season }), { kind: "primary", iconName: "down", small: true }),
+          button(t("explorer.download_season"), () => queue(item, { kind: "series", season: season.season }), { kind: made ? "" : "primary", iconName: "down", small: true }),
           selectionButton),
         season.episodes.map((ep) => {
           const box = h("input", { type: "checkbox", value: ep.id, onchange: update, "aria-label": ep.title });
@@ -159,15 +214,16 @@ export function explorerView(main, arg, ctx) {
   }
 
   function movieDetail(item, detail) {
-    return h("div", {}, header(item, detail), h("div", { class: "content" },
+    return h("div", {}, header(item, detail), h("div", { class: "content" }, elsewhereAlert(detail),
       card(t("explorer.release"), h("div", { class: "card-b stack" }, h("p", { class: "mono" }, detail.release || t("common.unknown")),
         h("div", { class: "inline" }, button(t("explorer.download_movie"), () => queue(item, { kind: "movie" }), { kind: "primary", iconName: "down" }),
           releaseLink((detail.releases || [])[0]))))));
   }
 
-  if (linkItem && (linkKind === "series" || linkKind === "movie")) {
+  // Only for the source named in the link: ids are per provider, another one may be another title.
+  if (linkItem && (linkKind === "series" || linkKind === "movie") && state.source.id === sourceId) {
     state.kind = linkKind;
-    state.item = { id: decodeURIComponent(linkItem), name: "" };
+    state.item = { id: decodeURIComponent(linkItem), name: "", fromLink: true };
     loadDetail();
   }
   drawKind();

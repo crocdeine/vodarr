@@ -17,7 +17,8 @@ THEMES = ("auto", "dark", "light")
 DEFAULTS: dict[str, Any] = {
     "services": {
         # maxChecksPerTracker: .torrent files verified per tracker and release, 0 = no limit
-        "prowlarr": {"url": "", "apiKey": "", "maxChecksPerTracker": 0},
+        # researchDays: days a release without a match is searched again daily, 0 = never
+        "prowlarr": {"url": "", "apiKey": "", "maxChecksPerTracker": 0, "researchDays": 30},
         "qbittorrent": {"url": "", "username": "", "password": ""},
         "tmdb": {"apiKey": ""},
     },
@@ -89,9 +90,12 @@ def validate(new: dict[str, Any]) -> None:
         dev = downloads.stat().st_dev
         if not any(d.stat().st_dev == dev for d in link_dirs):
             raise MsgError("settings.not_same_filesystem")  # AC-SET-04: hardlinks need it
-    limit = new["services"]["prowlarr"]["maxChecksPerTracker"]
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 0 <= limit <= 100:
-        raise MsgError("settings.bad_limit")
+    for value, top in (
+        (new["services"]["prowlarr"]["maxChecksPerTracker"], 100),
+        (new["services"]["prowlarr"]["researchDays"], 365),
+    ):
+        if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= top:
+            raise MsgError("settings.bad_limit")
     for svc in new["services"].values():
         url = svc.get("url") or ""  # TMDB has none
         if url and not url.startswith(("http://", "https://")):
@@ -142,8 +146,9 @@ def test_service(conn: sqlite3.Connection, service: str, values: dict | None = N
         if not key:
             return Msg("settings.not_configured", service=service)
         return services.TMDB(key).test()
-    if cfg[secret] == MASK:
-        if cfg["url"] != stored["url"]:
+    sent = (values or {}).get(secret)
+    if sent in (None, MASK):  # masked or omitted: the stored secret, only for the stored server
+        if cfg["url"] != stored["url"] and stored[secret]:
             raise MsgError("settings.secret_required", service=service)
         cfg[secret] = stored[secret]
     if not cfg["url"]:

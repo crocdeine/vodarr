@@ -274,21 +274,6 @@ def test_empty_title_never_matches_a_result():
     assert stages.classify_result(result, release, {None: 1000}) is None
 
 
-def test_research_removes_torrents_of_dropped_candidates(conn, tmp_path, make_season, prowl):
-    """Bug hunt: .torrent files (with passkeys) of replaced candidates were left behind."""
-    rid = analysed_season(conn, make_season)
-    old = tmp_path / "config" / "torrents" / f"{rid}-1.torrent"
-    old.parent.mkdir(parents=True, exist_ok=True)
-    old.write_bytes(b"d4:infod...e")
-    conn.execute(
-        "INSERT INTO candidates (release_id, indexer, title, scope, is_candidate, torrent_path)"
-        " VALUES (?, 'Nimbus', 'Old', 'S01', 1, ?)",
-        (rid, str(old)),
-    )
-    run_search(conn, tmp_path, rid)
-    assert not old.exists()
-
-
 def test_same_torrent_under_two_urls_is_listed_once(conn, tmp_path, make_season, prowl):
     """Real test: Prowlarr returned one C411 result twice (two download URLs)."""
     rid = analysed_season(conn, make_season)

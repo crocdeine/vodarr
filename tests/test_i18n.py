@@ -38,7 +38,7 @@ def backend_codes() -> set[str]:
         text = path.read_text()
         codes |= {
             m
-            for m in re.findall(r"[\"']([a-z]+\.[a-z_]+)[\"']", text)
+            for m in re.findall(r"[\"']([a-z]+\.[a-z0-9_]+)[\"']", text)
             if m.split(".")[0] in NAMESPACES
         }
         for reason in re.findall(r"f[\"']\{service\}\.([a-z_]+)[\"']", text):
@@ -70,3 +70,31 @@ def test_every_ui_key_used_in_scripts_exists():
         used |= set(re.findall(r"\bt\(\s*[\"'`]([\w.]+)[\"'`]", path.read_text()))
     missing = [k for k in used if k not in EN and not {f"{k}.one", f"{k}.other"} <= set(EN)]
     assert sorted(missing) == []
+
+
+# Keys built at run time: `t(`status.${s}`)` and friends.
+DYNAMIC = (
+    "status.",
+    "stage.",
+    "releases.filter.",
+    "releases.tab.",
+    "releases.scope.",
+    "settings.theme.",
+    "settings.language.",
+    "meta.",
+    "settings.path_",  # f"{code_prefix}.path_…" in settings.py
+)
+
+
+def test_every_ui_key_is_used():
+    """Frontend audit: keys of removed screens stayed behind."""
+    scripts = "".join(p.read_text() for p in (ROOT / "web").rglob("*.js"))
+    used = set(re.findall(r"[\"'`]([a-z_]+(?:\.[\w]+)+)[\"'`]", scripts)) | backend_codes()
+    unused = [
+        k
+        for k in EN
+        if k not in used
+        and re.sub(r"\.(one|other)$", "", k) not in used
+        and not k.startswith(DYNAMIC)
+    ]
+    assert sorted(unused) == []

@@ -120,6 +120,8 @@ def release_out(conn: sqlite3.Connection, row: sqlite3.Row) -> dict:
         "status": pipeline.status(conn, row["id"]),
         "tmdb_id": row["tmdb_id"],
         "cover": row["cover"],
+        "next_search": row["next_search"],
+        "research_until": row["research_until"],
         "files": files["n"],
         "done": files["done"],
         "total": files["total"],
@@ -370,18 +372,43 @@ def register(
             for r in rows
         ]
 
+    def elsewhere(source_id: str, kind: str, item_id: str, detail: dict) -> list[dict]:
+        """Releases of the same title made from another catalogue entry (another provider
+        often carries it): same TMDB id, or the same title once provider tags are removed."""
+        conn = db()
+        key = sources.fold(stages.clean_title(detail.get("name") or ""))
+        out = []
+        for r in conn.execute(
+            "SELECT * FROM releases WHERE kind = ? AND NOT (source_id = ? AND item_id = ?)"
+            " ORDER BY title, season",
+            (kind, source_id, str(item_id)),
+        ):
+            same_tmdb = detail.get("tmdb_id") and r["tmdb_id"] == detail["tmdb_id"]
+            years = {str(y)[:4] for y in (detail.get("year"), r["year"]) if y}
+            same_title = key and sources.fold(stages.clean_title(r["title"])) == key
+            if same_tmdb or (same_title and len(years) < 2):  # "Dune" 1984 is not "Dune" 2021
+                status = pipeline.status(conn, r["id"])
+                out.append(
+                    {"id": r["id"], "title": r["title"], "season": r["season"], "status": status}
+                )
+        return out
+
     @api.get("/sources/{source_id}/series/{item_id}")
     def sources_series(source_id: str, item_id: str):
+        detail = catalogue(source_id).series(item_id)
         return {
-            **catalogue(source_id).series(item_id),
+            **detail,
             "releases": queued(source_id, "series", item_id),
+            "elsewhere": elsewhere(source_id, "series", item_id, detail),
         }
 
     @api.get("/sources/{source_id}/movies/{item_id}")
     def sources_movie(source_id: str, item_id: str):
+        detail = catalogue(source_id).movie(item_id)
         return {
-            **catalogue(source_id).movie(item_id),
+            **detail,
             "releases": queued(source_id, "movie", item_id),
+            "elsewhere": elsewhere(source_id, "movie", item_id, detail),
         }
 
     @api.post("/releases", status_code=201)
@@ -422,7 +449,9 @@ def register(
         )
         cover = detail.get("cover")
         cover = (
-            cover if isinstance(cover, str) and re.match(r"https?://\S{1,2000}$", cover) else None
+            cover
+            if isinstance(cover, str) and re.fullmatch(r"https?://\S{1,2000}", cover)
+            else None
         )
         conn.execute(
             "UPDATE releases SET tmdb_id = coalesce(?, tmdb_id), cover = coalesce(?, cover)"
@@ -441,10 +470,11 @@ def register(
     ):
         conn = db()
         rows = conn.execute("SELECT * FROM releases ORDER BY created_at DESC, id").fetchall()
-        items = [release_out(conn, r) for r in rows]
-        if status:
-            items = [i for i in items if i["status"] in status]
-        return page_of(items, page, page_size)
+        if status:  # statuses first, then the full output only for the page shown
+            rows = [r for r in rows if pipeline.status(conn, r["id"]) in status]
+        out = page_of(rows, page, page_size)
+        out["data"] = [release_out(conn, r) for r in out["data"]]
+        return out
 
     def release_row(release_id: str) -> sqlite3.Row:
         row = db().execute("SELECT * FROM releases WHERE id = ?", (release_id,)).fetchone()
@@ -467,6 +497,24 @@ def register(
         release_row(release_id)
         pipeline.retry(db(), release_id, body.stage)
         wake["downloads" if body.stage == "download" else "pipeline"].set()
+        return {"ok": True}
+
+    @api.post("/releases/{release_id}/research")
+    def releases_research(release_id: str):
+        """Search now, keeping known verdicts (0.3); the daily clock restarts from now."""
+        conn = db()
+        row = release_row(release_id)
+        now = time.time()
+        # Each search may fetch new .torrent files (snatches): not more than once in 5 minutes.
+        if row["next_search"] and row["next_search"] - pipeline.DAY > now - 300:
+            raise MsgError("release.search_too_soon")
+        with pipeline.locked(conn):
+            pipeline.ensure_idle(conn, release_id)
+            pipeline.search_again(conn, release_id, now)
+            conn.execute(  # a manual search restarts the period of daily searches
+                "UPDATE releases SET research_until = NULL WHERE id = ?", (release_id,)
+            )
+        wake["pipeline"].set()
         return {"ok": True}
 
     @api.post("/releases/{release_id}/complete")

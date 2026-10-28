@@ -24,14 +24,18 @@ export function append(el, children) {
 }
 
 export function replace(el, ...children) {
+  // Polling rebuilds lists: a focused control with a data-key gets the focus back.
+  const key = el.contains(document.activeElement) ? document.activeElement.dataset?.key : null;
   el.replaceChildren();
-  return append(el, children);
+  append(el, children);
+  if (key) el.querySelector(`[data-key="${CSS.escape(key)}"]`)?.focus();
+  return el;
 }
 
 /** True while the user is typing in this subtree: polling must not rebuild it (AC-UI-04). */
 export function editing(root) {
   const active = document.activeElement;
-  if (active && root.contains(active) && active.matches("input, select, textarea")) return true;
+  if (active && root.contains(active) && active.matches("input:not([type=checkbox]), textarea")) return true;
   return !!root.querySelector("form[data-dirty]");
 }
 

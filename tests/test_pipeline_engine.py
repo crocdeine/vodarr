@@ -4,15 +4,18 @@ from vodarr import downloads, pipeline, sources
 from vodarr.core import Msg, MsgError
 
 
-def make_release(conn, tmp_path, download_state="done"):
+def make_release(conn, tmp_path, download_state="done", item="100"):
     src = sources.add(conn, "S", "xtream", {"server": "http://x", "user": "u", "password": "p"})
     eps = [{"id": "1", "num": 1, "title": "Show - S01E01", "ext": "mkv"}]
     rid = downloads.enqueue(
-        conn, src, "series", "100", "Show", None, 1, eps, tmp_path / "dl", now=1
+        conn, src, "series", item, f"Show {item}", None, 1, eps, tmp_path / "dl", now=1
     )
     if download_state == "done":
-        conn.execute("UPDATE files SET dl_status = 'done'")
-    conn.execute("UPDATE stages SET state = ? WHERE name = 'download'", (download_state,))
+        conn.execute("UPDATE files SET dl_status = 'done' WHERE release_id = ?", (rid,))
+    conn.execute(
+        "UPDATE stages SET state = ? WHERE name = 'download' AND release_id = ?",
+        (download_state, rid),
+    )
     return rid
 
 
@@ -37,6 +40,16 @@ def handlers(log, **overrides):
     return out
 
 
+def nothing_found(log):
+    """Stages where the search ran and nothing identical was found."""
+
+    def restore(ctx):
+        log.append("restore")
+        raise pipeline.Skip("restore.no_reference")
+
+    return handlers(log, restore=restore)
+
+
 def run_all(conn, tmp_path, hs):
     while pipeline.process_next(conn, tmp_path / "config", hs):
         pass
@@ -49,7 +62,7 @@ def test_stages_chain_in_order(conn, tmp_path):
     run_all(conn, tmp_path, handlers(log))
     assert log == ["analyse", "search", "verify", "restore", "seed"]
     assert set(states(conn, rid).values()) == {"done"}
-    assert pipeline.status(conn, rid) == "no_match"  # finished, nothing seeded
+    assert pipeline.status(conn, rid) == "done"  # restore did not report "no reference"
     msg = conn.execute(
         "SELECT msg_code, pct FROM stages WHERE release_id = ? AND name = 'seed'", (rid,)
     ).fetchone()
@@ -74,7 +87,7 @@ def test_skipped_stage_continues(conn, tmp_path):
     run_all(conn, tmp_path, handlers(log, search=skip))
     assert states(conn, rid)["search"] == "skipped"
     assert log == ["analyse", "verify", "restore", "seed"]
-    assert pipeline.status(conn, rid) == "no_match"  # finished, nothing seeded
+    assert pipeline.status(conn, rid) == "done"  # restore did not report "no reference"
 
 
 def test_error_stops_release(conn, tmp_path):
@@ -164,7 +177,6 @@ def test_action_required_status(conn, tmp_path):
     conn.execute(cand, (rid, "Nimbus", "partial"))
     assert pipeline.status(conn, rid) == "action_required"
     conn.execute(cand, (rid, "Aurora", "identical"))  # the scope already has a reference
-    assert pipeline.status(conn, rid) == "no_match"  # identical but not linked yet
     conn.execute("UPDATE candidates SET link_root = '/links/x' WHERE indexer = 'Aurora'")
     assert pipeline.status(conn, rid) == "done"
 
@@ -245,7 +257,7 @@ def test_release_without_files_is_not_stuck_downloading(conn, tmp_path):
 def test_no_match_status(conn, tmp_path):
     """0.2: a finished release with nothing linked or seeded is not "done"."""
     rid = make_release(conn, tmp_path)
-    run_all(conn, tmp_path, handlers([]))
+    run_all(conn, tmp_path, nothing_found([]))
     assert pipeline.status(conn, rid) == "no_match"
     conn.execute(
         "INSERT INTO candidates (release_id, indexer, title, scope, is_candidate, status,"
@@ -253,3 +265,71 @@ def test_no_match_status(conn, tmp_path):
         (rid,),
     )
     assert pipeline.status(conn, rid) == "done"
+
+
+def test_release_without_match_is_searched_again_daily(conn, tmp_path, monkeypatch):
+    """0.3: a release still without a match is searched once a day for researchDays days."""
+    from vodarr import core
+
+    monkeypatch.setattr(pipeline, "_last_tick", 0.0)
+    rid = make_release(conn, tmp_path)
+    run_all(conn, tmp_path, nothing_found([]))
+    assert pipeline.status(conn, rid) == "no_match"
+    core.set_setting(conn, "services", {"prowlarr": {"researchDays": 3}})
+    day, t0 = pipeline.DAY, 1_000_000.0
+    assert pipeline.research_tick(conn, t0) is False  # starts the clock
+    row = conn.execute("SELECT next_search, research_until FROM releases").fetchone()
+    assert (row["next_search"], row["research_until"]) == (t0 + day, t0 + 3 * day)
+    assert pipeline.research_tick(conn, t0 + 120) is False  # not due yet
+    assert pipeline.research_tick(conn, t0 + day + 1) is True
+    assert states(conn, rid)["search"] == "pending" and states(conn, rid)["verify"] == "pending"
+    log = []
+    run_all(conn, tmp_path, nothing_found(log))
+    assert log == ["search", "verify", "restore", "seed"]  # download and analyse are not redone
+    assert pipeline.research_tick(conn, t0 + 2 * day + 2) is True
+    run_all(conn, tmp_path, nothing_found([]))
+    assert pipeline.research_tick(conn, t0 + 3 * day + 3) is False  # the period is over
+
+
+def test_automatic_search_can_be_turned_off(conn, tmp_path, monkeypatch):
+    from vodarr import core
+
+    monkeypatch.setattr(pipeline, "_last_tick", 0.0)
+    rid = make_release(conn, tmp_path)
+    run_all(conn, tmp_path, nothing_found([]))
+    core.set_setting(conn, "services", {"prowlarr": {"researchDays": 0}})
+    assert pipeline.research_tick(conn, 2_000_000.0) is False
+    assert (
+        conn.execute("SELECT next_search FROM releases WHERE id = ?", (rid,)).fetchone()[0] is None
+    )
+
+
+def test_skipped_search_is_not_no_match(conn, tmp_path):
+    """Backend audit: no Prowlarr (search skipped) must not be searched again daily."""
+
+    def no_prowlarr(ctx):
+        raise pipeline.Skip("search.no_prowlarr")
+
+    rid = make_release(conn, tmp_path)
+    log = []
+    hs = nothing_found(log)
+    hs["search"] = no_prowlarr
+    run_all(conn, tmp_path, hs)
+    assert pipeline.status(conn, rid) == "done"
+
+
+def test_one_release_searched_per_tick(conn, tmp_path, monkeypatch):
+    """Backend audit: releases due together must not hit the trackers in the same minute."""
+    from vodarr import core
+
+    rids = [make_release(conn, tmp_path, item=str(i)) for i in range(3)]
+    run_all(conn, tmp_path, nothing_found([]))
+    core.set_setting(conn, "services", {"prowlarr": {"researchDays": 30}})
+    monkeypatch.setattr(pipeline, "_last_tick", 0.0)
+    t0 = 1_000_000.0
+    pipeline.research_tick(conn, t0)
+    due = t0 + pipeline.DAY + 1
+    for minute in range(3):
+        assert pipeline.research_tick(conn, due + 60 * minute) is True
+        pending = [r for r in rids if states(conn, r)["search"] == "pending"]
+        assert len(pending) == minute + 1

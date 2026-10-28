@@ -204,6 +204,18 @@ def enqueue(
                 " WHERE release_id = ?",
                 (release_id,),
             )
+            # Verdicts were given against fewer files: checked again (from the saved .torrent,
+            # nothing is downloaded twice); the automatic searches start over.
+            conn.execute(
+                "UPDATE candidates SET status = 'pending', problem_code = NULL,"
+                " problem_params = NULL, file_report = NULL"
+                " WHERE release_id = ? AND link_root IS NULL AND added_to_qbit = 0",
+                (release_id,),
+            )
+            conn.execute(
+                "UPDATE releases SET next_search = NULL, research_until = NULL WHERE id = ?",
+                (release_id,),
+            )
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")

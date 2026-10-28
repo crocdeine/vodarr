@@ -305,3 +305,18 @@ def test_tracker_check_limit_is_validated(client):
     assert r.status_code == 200
     assert r.json()["services"]["prowlarr"]["maxChecksPerTracker"] == 3
     assert put(client, {"services": {"prowlarr": {"maxChecksPerTracker": -1}}}).status_code == 422
+
+
+@pytest.mark.parametrize("secret", [{}, {"apiKey": None}, {"apiKey": "••••"}])
+def test_test_button_never_sends_the_stored_key_to_a_new_server(client, secret):
+    """Security audit: an omitted key was filled from storage and sent to the typed URL."""
+    put(
+        client,
+        {"services": {"prowlarr": {"url": "http://prowlarr:9696", "apiKey": "real-key-123"}}},
+    )
+    r = client.post(
+        "/api/settings/test",
+        json={"service": "prowlarr", "url": "http://attacker:9696", **secret},
+        headers=H,
+    )
+    assert r.status_code == 422 and r.json()["error"]["code"] == "settings.secret_required"

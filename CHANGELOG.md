@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.3.0 — 2026-10-28
+
+### Added
+- **Automatic new searches**: a release without a match is searched again once a day for 30 days
+  (Settings › Prowlarr, 0 = never) — releases often reach the trackers after the provider. Only
+  new results are checked. The release page says when the next search runs and has a
+  **Search now** button.
+- Explorer: **download every remaining season** of a series in one click.
+- Explorer: a title already downloaded from **another provider's entry** (same TMDB id or same
+  title) says so and links to those releases, so it is not downloaded twice.
+- Explorer opened from a release lists every entry of that title on the left (search filled in).
+- Forced subtitle tracks are labelled as such; identical tracks are counted ("French ×2")
+  instead of repeated.
+
+### Security
+- Settings › *Test*: a stored API key or password is never sent to a different address when the
+  secret field is omitted (it already was refused when masked).
+- Posters load over https only again (an http cover URL from a provider could make the browser
+  request an address on the local network).
+- *Search now* runs at most once every 5 minutes per release (each search may download new
+  `.torrent` files).
+
+### Fixed
+- Code audit: candidates known before episodes were added are re-classified and checked again
+  (from the saved `.torrent`); a candidate that failed (tracker down) is retried by the daily
+  search; "No match" only after a real search (not when Prowlarr or the link folder is not set);
+  releases due together are searched one per minute; the same title of another year is not
+  flagged as a duplicate.
+- Interface audit: the status filter no longer pauses the live refresh; queueing from the
+  Explorer keeps the list and the page where they were; the focused button survives refreshes
+  in the downloads drawer and the pager, and Esc closes the drawer; screen readers no longer
+  re-read whole lists every 2 seconds; "Download all seasons" says how many were queued when it
+  stops on an error.
+
+### Changed
+- "Download the season" is a secondary button on seasons already downloaded.
+- A new search keeps the verdicts already known, and a `.torrent` already downloaded is read
+  again from disk instead of being downloaded twice; the per-tracker limit counts every
+  `.torrent` downloaded for the release.
+
 ## 0.2.0 — 2026-10-26
 
 ### Added
@@ -36,8 +76,7 @@
 
 ### Fixed
 - Posters in lists: the releases list now shows the title's poster (the catalogue's, or TMDB's
-  for releases queued before this version), and posters served over plain http are no longer
-  blocked.
+  for releases queued before this version).
 - When VODarr cannot be reached (stopped, network down), the interface says so instead of
   failing silently.
 
